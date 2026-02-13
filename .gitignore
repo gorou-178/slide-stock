@@ -1,0 +1,34 @@
+# Node
+node_modules/
+
+## OS Files
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# OSX
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Claude
+.claude/settings.local.json
+
+# secret files
+*.pem
+*.key
+*.crt
+*.jks
+*.p12
+*.keystore
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
