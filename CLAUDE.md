@@ -1,11 +1,12 @@
-# スライドストックサービス（名称未定）  
+# スライドストックサービス（名称未定）
+
 Cloudflare上で構築する個人向けスライドストックサービス
 
 ---
 
 ## 1. プロジェクト概要
 
-本プロダクトは、SpeakerDeck / Docswell / Google Slides の公開スライドを  
+本プロダクトは、SpeakerDeck / Docswell / Google Slides の公開スライドを
 **URL入力のみでストックできる個人向けWebサービス**である。
 
 Cloudflareを基盤とし、運用コストを極力抑えつつ、
@@ -35,124 +36,32 @@ Cloudflareを基盤とし、運用コストを極力抑えつつ、
 
 ---
 
-## 4. 技術構成
+## 4. 技術構成・アーキテクチャ
 
-### フロントエンド
+詳細は [docs/architecture.md](docs/architecture.md) を参照。
 
-- **Astro（TypeScript）**
-- Cloudflare Pages にデプロイ
-- APIとは完全分離構成
-
-理由：
-- JS最小構成で高速
-- 学習コストが低い
-- API境界が明確で将来移植しやすい
-
----
-
-### API
-
-- Cloudflare Workers
-- REST API設計
-- JSONベース通信
-
-設計原則：
-- フロントからはHTTPのみ利用
-- DBやCloudflare固有APIへ直接依存しない
-- 認証はBearerトークン前提設計（Cookie併用可）
+概要：
+- フロントエンド: Astro (TypeScript) → Cloudflare Pages
+- API: Cloudflare Workers (REST / JSON)
+- 認証: Google Login (OIDC) → JWT検証 → セッション発行
+- DB: Cloudflare D1 (SQLiteベース)
+- 非同期処理: Cloudflare Queues (oEmbedメタデータ取得)
+- 対応プロバイダ: SpeakerDeck / Docswell / Google Slides
 
 ---
 
-### 認証
+## 5. データモデル
 
-- Google Login（OIDC）
-- 取得情報：
-  - sub（Google Subject ID）
-  - email
-  - name
+詳細は [docs/database.md](docs/database.md) を参照。
 
-API側でJWT検証を行い、セッションを発行
-
----
-
-### データベース
-
-- Cloudflare D1（SQLiteベース）
-- SQLはRDB移植可能な設計を維持
-  - 外部キー明示
-  - 正規化を意識
-  - ベンダー依存構文を避ける
-- マイグレーション管理を実施
-
-将来的にPostgreSQL等へ移行可能な設計とする。
+テーブル：
+- **users** — ユーザー情報 (Google OIDC)
+- **stocks** — ストックしたスライド情報
+- **memos** — スライドに対するテキストメモ
 
 ---
 
-### 非同期処理
-
-- Cloudflare Queues を利用
-- 処理内容：
-  - URL登録後のメタデータ取得（oEmbed）
-  - タイトル / 作者 / サムネURLの取得
-
-設計方針：
-- APIは即時レスポンス
-- メタデータ取得はQueue経由でWorker Consumerが処理
-- JSONメッセージ形式（schemaVersion付き）
-
----
-
-## 5. 対応プロバイダ
-
-- SpeakerDeck
-- Docswell
-- Google Slides（公開スライドのみ）
-
-処理方針：
-- URLからprovider判定
-- 可能な場合はoEmbed利用
-- embedUrlのみ保存（embed_htmlは保存しない）
-- サムネイル画像の再配信は行わない
-
----
-
-## 6. データモデル（MVP）
-
-### users
-
-- id
-- google_sub（unique）
-- email
-- name
-- created_at
-
-### stocks
-
-- id
-- user_id
-- original_url
-- canonical_url
-- provider
-- title（nullable）
-- author_name（nullable）
-- thumbnail_url（nullable）
-- embed_url（nullable）
-- status（pending / ready / failed）
-- created_at
-- updated_at
-
-### memos
-
-- id
-- stock_id
-- user_id
-- memo_text
-- created_at
-- updated_at
-
----
-
-## 7. API設計（概要）
+## 6. API設計（概要）
 
 ### 認証
 - GET /me
@@ -169,7 +78,7 @@ API側でJWT検証を行い、セッションを発行
 
 ---
 
-## 8. 画面構成（MVP）
+## 7. 画面構成（MVP）
 
 ### 1. ログイン画面
 - Google Loginボタン
@@ -189,41 +98,7 @@ API側でJWT検証を行い、セッションを発行
 
 ---
 
-## 9. コスト最適化方針
-
-- R2は使用しない（サムネ保存しない）
-- 画像は元URL参照
-- Workers無料枠活用
-- D1無料枠活用
-- Queues無料枠活用
-- JSを最小化し転送量削減
-
-目標：
-月額ほぼゼロ〜数百円以内に抑える
-
----
-
-## 10. 設計原則
-
-- フロントとAPIは完全分離
-- APIは純粋なHTTPインターフェース
-- Cloudflare固有機能への依存は最小化
-- 将来的なクラウド移行を想定した抽象化
-- MVPは小さく作り、後から拡張可能にする
-
----
-
-## 11. 将来拡張可能性（参考）
-
-- ページ単位ベストスライド
-- 全文検索
-- AI検索（Embedding）
-- 公開コレクション
-- サムネキャッシュ（R2）
-
----
-
-## 12. 成功基準
+## 8. 成功基準
 
 - URL入力のみでスライドが登録できる
 - 一覧でembed表示できる
@@ -233,4 +108,10 @@ API側でJWT検証を行い、セッションを発行
 
 ---
 
+## 9. 将来拡張可能性（参考）
 
+- ページ単位ベストスライド
+- 全文検索
+- AI検索（Embedding）
+- 公開コレクション
+- サムネキャッシュ（R2）
