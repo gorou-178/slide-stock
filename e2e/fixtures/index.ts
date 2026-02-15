@@ -1,9 +1,70 @@
-import { test as base } from "@playwright/test";
+import { test as base, type Page } from "@playwright/test";
 
 /**
- * カスタムフィクスチャの拡張ポイント。
- * 認証済みユーザーやテストデータのセットアップなど、
- * 共通の前処理をここに追加していく。
+ * テスト用認証ユーザーの型定義
  */
-export const test = base.extend({});
+export interface TestUser {
+  id: string;
+  email: string;
+  name: string;
+}
+
+/**
+ * デフォルトのテストユーザー
+ */
+export const DEFAULT_TEST_USER: TestUser = {
+  id: "test-user-001",
+  email: "test@example.com",
+  name: "Test User",
+};
+
+/**
+ * 認証バイパスを使ってページにログイン済みユーザーとしてアクセスするヘルパー
+ *
+ * Worker API に対して X-Test-User-Id ヘッダーを付与し、
+ * フロントエンドには test_session Cookie をセットする。
+ */
+async function setupAuthenticatedPage(
+  page: Page,
+  user: TestUser
+): Promise<void> {
+  // API リクエストに X-Test-User-Id ヘッダーを付与する
+  await page.route("**/api/**", (route) => {
+    const headers = {
+      ...route.request().headers(),
+      "X-Test-User-Id": user.id,
+      "X-Test-User-Email": user.email,
+    };
+    route.continue({ headers });
+  });
+
+  // フロントエンド用にテスト用セッション Cookie をセット
+  await page.context().addCookies([
+    {
+      name: "test_session",
+      value: `test-token-${user.id}`,
+      domain: "localhost",
+      path: "/",
+    },
+  ]);
+}
+
+/**
+ * カスタムフィクスチャの拡張。
+ *
+ * - authenticatedPage: 認証済みユーザーでセットアップされた Page
+ * - testUser: テストで使用するユーザー情報
+ */
+export const test = base.extend<{
+  authenticatedPage: Page;
+  testUser: TestUser;
+}>({
+  testUser: [DEFAULT_TEST_USER, { option: true }],
+
+  authenticatedPage: async ({ page, testUser }, use) => {
+    await setupAuthenticatedPage(page, testUser);
+    await use(page);
+  },
+});
+
 export { expect } from "@playwright/test";
