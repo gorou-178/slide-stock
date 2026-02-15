@@ -16,11 +16,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-TASKS_DIR="$PROJECT_DIR/tasks"
-TASKS_FILE="$TASKS_DIR/TASKS.md"
 PROMPTS_DIR="$SCRIPT_DIR/prompts"
-LOGS_DIR="$TASKS_DIR/logs"
-LOCK_DIR="$TASKS_DIR/.runner.lock"
+# worktree分離時に共通SSOTへ寄せるため override 可能にする
+TASKS_DIR="${TASKS_DIR:-$PROJECT_DIR/tasks}"
+TASKS_FILE="${TASKS_FILE:-$TASKS_DIR/TASKS.md}"
+LOGS_DIR="${LOGS_DIR:-$TASKS_DIR/logs}"
+LOCK_DIR="${LOCK_DIR:-$TASKS_DIR/.runner.lock}"
 
 # デフォルト設定
 INTERVAL="${INTERVAL:-60}"

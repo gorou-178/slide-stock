@@ -115,3 +115,26 @@ Cloudflareを基盤とし、運用コストを極力抑えつつ、
 - AI検索（Embedding）
 - 公開コレクション
 - サムネキャッシュ（R2）
+
+---
+
+## 10. 自走タスク運用（tmux + worktree 分離）
+
+このリポジトリは `tasks/TASKS.md` をSSOTとして、PM/QA/DEV の3ロールが並列に自走できるようにする。
+
+### 前提
+- `tasks/TASKS.md` のタスク行は以下の形式で書く（CLAIMを使う）  
+  - `- [ ] @pm T-001 — ...`  未着手  
+  - `- [>] @pm T-001 — ...`  CLAIM済み（実行中）  
+  - `- [x] @pm T-001 — ...`  完了  
+  - `- [!] @pm T-001 — ...`  失敗
+
+- `scripts/task-runner.sh` は並列安全（ROLE/CLAIM/lock/permission反映）になっていること
+- worktree 分離モードでは、TASKS/lock/log を **共通ディレクトリ**（メインの `tasks/`）へ寄せる
+
+---
+
+### 1) 初回セットアップ（worktree作成）
+```bash
+./scripts/run-agents-tmux-worktrees.sh --init
+```
