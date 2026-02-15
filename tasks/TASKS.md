@@ -11,8 +11,9 @@
 - [x] @qa 004-test-e2e-scaffold — E2E テスト基盤の構築 (Playwright セットアップ・初期シナリオ)
 - [x] @dev 005-impl-e2e-scaffold — E2E テスト実行環境の実装 (dev サーバー連携・CI 対応)
 - [x] @qa 006-test-auth-bypass — 認証バイパス付きテスト環境のテスト作成
-- [ ] @pm help-e2e-custom-user-test — 相談: E2E テスト「カスタムユーザーでの認証」が about:blank での相対URL解決で失敗する件
-- [ ] @dev 007-impl-auth-bypass — Google ログインを迂回するテスト用認証モックの実装
+- [x] @pm help-e2e-custom-user-test — 相談: E2E テスト「カスタムユーザーでの認証」が about:blank での相対URL解決で失敗する件
+- [x] @qa 006a-fix-custom-user-test — E2E テスト「カスタムユーザーでの認証」修正（goto追加）
+- [x] @dev 007-impl-auth-bypass — Google ログインを迂回するテスト用認証モックの実装
 - [ ] @dev 008-seed-testdata — テスト用シードデータの作成 (ユーザー・ストック・メモ)
 - [ ] @dev 009-d1-migration — D1 マイグレーション SQL の作成と適用手順の整備
 
