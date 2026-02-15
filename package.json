@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "db:seed": "npx tsx scripts/seed-local.ts > /tmp/slide-stock-seed.sql && wrangler d1 execute slide-stock-db --local --file=/tmp/slide-stock-seed.sql"
   },
   "dependencies": {
     "astro": "^5.17.1"
@@ -24,6 +25,7 @@
     "@cloudflare/vitest-pool-workers": "^0.12.12",
     "@cloudflare/workers-types": "^4.20250214.0",
     "@playwright/test": "^1.58.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.2",
     "vitest": "~3.2.0",
     "wrangler": "^4.14.4"

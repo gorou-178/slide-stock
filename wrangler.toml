@@ -1,0 +1,8 @@
+name = "slide-stock-api"
+main = "worker/index.ts"
+compatibility_date = "2025-02-14"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "slide-stock-db"
+database_id = "placeholder-replace-with-actual-id"

@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import type { D1Migration } from "@cloudflare/vitest-pool-workers/config";
+import { seedDatabase, cleanDatabase } from "../../src/test/helpers";
 
 /**
  * D1 マイグレーションを適用する。
@@ -16,4 +17,22 @@ export async function applyMigrations(): Promise<void> {
       await env.DB.batch(statements);
     }
   }
+}
+
+/**
+ * マイグレーション適用後にシードデータを投入する。
+ * テストの beforeAll で applyMigrations() の代わりに呼び出す。
+ */
+export async function applyMigrationsAndSeed(): Promise<void> {
+  await applyMigrations();
+  await seedDatabase(env.DB);
+}
+
+/**
+ * シードデータをクリアして再投入する。
+ * テストの beforeEach でデータをリセットしたい場合に使う。
+ */
+export async function resetSeedData(): Promise<void> {
+  await cleanDatabase(env.DB);
+  await seedDatabase(env.DB);
 }
