@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 PROMPTS_DIR="$SCRIPT_DIR/prompts"
-# worktree分離時に共通SSOTへ寄せるため override 可能にする
+# override 可能にする
 TASKS_DIR="${TASKS_DIR:-$PROJECT_DIR/tasks}"
 TASKS_FILE="${TASKS_FILE:-$TASKS_DIR/TASKS.md}"
 LOGS_DIR="${LOGS_DIR:-$TASKS_DIR/logs}"
@@ -168,6 +168,50 @@ claim_task() {
   return 1
 }
 
+# ----------------------------
+# PRコメント投稿
+# ----------------------------
+post_pr_comment() {
+  local role="$1" task_id="$2" status="$3" started="$4" finished="$5"
+  # gh が使えない or 認証されていなければスキップ
+  if ! command -v gh >/dev/null 2>&1; then
+    log "gh CLI が見つかりません。PRコメントをスキップ"
+    return 0
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    log "gh 未認証。PRコメントをスキップ"
+    return 0
+  fi
+
+  # 現在のブランチに紐づくPRを取得
+  local pr_number
+  pr_number="$(gh pr view --json number -q .number 2>/dev/null || true)"
+  if [[ -z "$pr_number" ]]; then
+    log "対応するPRなし。PRコメントをスキップ"
+    return 0
+  fi
+
+  # タスク説明を取得
+  local desc
+  desc="$(grep -E "@${role}[[:space:]]*${task_id}[[:space:]]" "$TASKS_FILE" | sed 's/^.*— //' | head -1 || true)"
+
+  local icon="✅"
+  [[ "$status" != "success" ]] && icon="❌"
+
+  local body
+  body="### ${icon} ${task_id} — ${desc}
+- **Role**: @${role}
+- **Mode**: autonomous
+- **Duration**: ${started} → ${finished}"
+
+  if [[ "$status" != "success" ]]; then
+    body="${body}
+- **Error**: exit code non-zero (詳細は \`tasks/logs/${task_id}.log\` を参照)"
+  fi
+
+  gh pr comment "$pr_number" --body "$body" 2>/dev/null || log "PRコメント投稿に失敗（続行）"
+}
+
 dry_run() {
   log "=== DRY-RUN: 未完了タスク ==="
   local found=false
@@ -240,11 +284,13 @@ run_task() {
 
   local exit_code=0
   local claude_exit=0
+  local started finished
+  started="$(date '+%Y-%m-%d %H:%M:%S')"
   log "role=$role, permission=$CLAUDE_PERMISSION, model=${CLAUDE_MODEL:-default}"
 
   {
     echo "=== Task: @${role} ${task_id} ==="
-    echo "=== Started: $(date '+%Y-%m-%d %H:%M:%S') ==="
+    echo "=== Started: ${started} ==="
     echo ""
     echo "$prompt" | (cd "$PROJECT_DIR" && claude "${claude_args[@]}") 2>&1 || claude_exit=$?
     echo ""
@@ -252,13 +298,16 @@ run_task() {
     echo "=== Finished: $(date '+%Y-%m-%d %H:%M:%S') ==="
   } > >(tee "$log_file") 2>&1
   exit_code=$claude_exit
+  finished="$(date '+%Y-%m-%d %H:%M:%S')"
 
   if [[ $exit_code -eq 0 ]]; then
     mark_task "$role" "$task_id" "x"
     log "=== タスク完了: @${role} ${task_id} ==="
+    post_pr_comment "$role" "$task_id" "success" "$started" "$finished"
   else
     mark_task "$role" "$task_id" "!"
     log "=== タスク失敗: @${role} ${task_id} (exit=$exit_code) ==="
+    post_pr_comment "$role" "$task_id" "failure" "$started" "$finished"
   fi
 
   return $exit_code
