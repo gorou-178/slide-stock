@@ -91,7 +91,9 @@ COMMON_LOCK_DIR="$COMMON_TASKS_DIR/.runner.lock"
 COMMON_LOGS_DIR="$COMMON_TASKS_DIR/logs"
 
 create_worktree_if_missing() {
-  local role="$1" dir="$2" branch="agent/${role}"
+  local role="${1:?role is required}"
+  local dir="${2:?dir is required}"
+  local branch="agent/${role}"
 
   if [[ -d "$dir" ]]; then
     return 0
@@ -166,4 +168,3 @@ tmux select-layout -t "$SESSION:agents" even-horizontal
 tmux resize-pane -t "$SESSION:agents.2" -y 18 2>/dev/null || true
 
 tmux attach -t "$SESSION"
-
