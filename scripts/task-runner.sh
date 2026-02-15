@@ -2,105 +2,98 @@
 set -euo pipefail
 
 # ============================================================
-# task-runner.sh — TASKS.md のチェックリストに従い claude -p で順次実行
+# task-runner.sh — TASKS.md のチェックリストに従い claude -p で順次実行（並列対応）
 #
 # TASKS.md 書式:
-#   - [ ] @role task-id — 説明
-#   - [x] @role task-id — 説明  (完了)
-#   - [!] @role task-id — 説明  (失敗)
+# - [ ] @role task-id — 説明         (未着手)
+# - [>] @role task-id — 説明         (CLAIM済み / 実行中)
+# - [x] @role task-id — 説明         (完了)
+# - [!] @role task-id — 説明         (失敗)
 #
 # role: pm, qa, dev
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 TASKS_DIR="$PROJECT_DIR/tasks"
 TASKS_FILE="$TASKS_DIR/TASKS.md"
 PROMPTS_DIR="$SCRIPT_DIR/prompts"
 LOGS_DIR="$TASKS_DIR/logs"
-PID_FILE="$TASKS_DIR/.runner.pid"
+LOCK_DIR="$TASKS_DIR/.runner.lock"
 
 # デフォルト設定
 INTERVAL="${INTERVAL:-60}"
 ONCE=false
 DRY_RUN=false
+ROLE="${ROLE:-}" # pm / qa / dev（空なら全ロール対象）
 CLAUDE_MODEL="${CLAUDE_MODEL:-}"
-CLAUDE_PERMISSION="${CLAUDE_PERMISSION:-bypassPermissions}"
+CLAUDE_PERMISSION="${CLAUDE_PERMISSION:-bypassPermissions}" # default / bypassPermissions / plan
 
-# ============================================================
-# 関数定義
-# ============================================================
+PID_FILE="" # role確定後に設定
 
 usage() {
-  cat <<EOF
-Usage: $(basename "$0") [OPTIONS]
+  cat <<'EOF'
+task-runner.sh — tasks/TASKS.md のチェックリストに従い claude -p を実行します（並列対応）。
 
-TASKS.md のチェックリストを上から順に読み、未完了タスクを claude -p で実行する。
-各タスクには @role（pm/qa/dev）が付与され、ロールに応じたシステムプロンプトで実行される。
-
-  TASKS.md の書式:
-    - [ ] @pm  001-plan        — 要件定義        (未実行)
-    - [ ] @qa  002-test-auth   — 認証テスト作成  (未実行)
-    - [ ] @dev 003-impl-auth   — 認証実装        (未実行)
-    - [x] @dev 003-impl-auth   — 認証実装        (完了)
-    - [!] @dev 003-impl-auth   — 認証実装        (失敗)
-
-  各タスクの詳細は tasks/<task-id>.md に記述する。
-  ロール別プロンプトは scripts/prompts/{pm,qa,dev}.md に定義。
+TASKS.md:
+  - [ ] @role task-id — 説明   (未着手)
+  - [>] @role task-id — 説明   (CLAIM済み)
+  - [x] @role task-id — 説明   (完了)
+  - [!] @role task-id — 説明   (失敗)
 
 Options:
-  --once          1件処理したら終了
-  --dry-run       実行せず対象タスクを表示
-  --interval N    チェック間隔（秒, デフォルト: 60）
-  --model MODEL   Claude モデル指定 (sonnet, opus, haiku)
-  --permission M  permission-mode (default, bypassPermissions, plan)
-  --list          TASKS.md の内容を表示して終了
-  -h, --help      このヘルプを表示
+  --role ROLE         対象ロール (pm|qa|dev)。未指定なら全ロール
+  --once              1件処理したら終了
+  --dry-run           実行せず対象タスクを表示
+  --interval N        チェック間隔（秒, デフォルト: 60）
+  --model MODEL       Claude モデル指定 (sonnet, opus, haiku)
+  --permission M      permission-mode (default, bypassPermissions, plan)
+  --list              TASKS.md の内容を表示して終了
+  -h, --help          このヘルプを表示
 
 Environment:
-  INTERVAL          チェック間隔（秒, デフォルト: 60）
-  CLAUDE_MODEL      モデル指定
-  CLAUDE_PERMISSION permission-mode (デフォルト: default)
+  ROLE                 対象ロール
+  INTERVAL             チェック間隔（秒, デフォルト: 60）
+  CLAUDE_MODEL          モデル指定
+  CLAUDE_PERMISSION     permission-mode
 EOF
 }
 
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
-}
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
-# TASKS.md から最初の未完了行を解析して "role task-id" を返す
-# 書式: - [ ] @role task-id — 説明
-next_pending() {
-  local line
-  line="$(grep '^- \[ \] @' "$TASKS_FILE" | head -1)" || true
-  [[ -z "$line" ]] && return
-  local role task_id
-  role="$(echo "$line" | awk '{ print $4 }' | sed 's/^@//')"
-  task_id="$(echo "$line" | awk '{ print $5 }')"
-  echo "$role $task_id"
-}
-
-# TASKS.md のチェックを更新する（スペース数に依存しない）
-mark_task() {
-  local role="$1" task_id="$2" mark="$3"
-  sed -i '' "s/^- \[ \] @${role}  *${task_id} /- [${mark}] @${role} ${task_id} /" "$TASKS_FILE"
+require_tasks_file() {
+  if [[ ! -f "$TASKS_FILE" ]]; then
+    echo "ERROR: TASKS.md が見つかりません: $TASKS_FILE"
+    exit 1
+  fi
 }
 
 list_tasks() {
-  if [[ ! -f "$TASKS_FILE" ]]; then
-    echo "TASKS.md が見つかりません: $TASKS_FILE"
+  require_tasks_file
+  cat "$TASKS_FILE"
+}
+
+validate_role() {
+  if [[ -n "$ROLE" ]] && [[ "$ROLE" != "pm" && "$ROLE" != "qa" && "$ROLE" != "dev" ]]; then
+    echo "ERROR: --role は pm|qa|dev のいずれかです: ROLE=$ROLE"
     exit 1
   fi
-  cat "$TASKS_FILE"
+}
+
+set_pid_file() {
+  local suffix="all"
+  [[ -n "$ROLE" ]] && suffix="$ROLE"
+  PID_FILE="$TASKS_DIR/.runner.${suffix}.pid"
 }
 
 check_pid() {
   if [[ -f "$PID_FILE" ]]; then
     local old_pid
-    old_pid="$(cat "$PID_FILE")"
-    if kill -0 "$old_pid" 2>/dev/null; then
-      echo "ERROR: task-runner は既に実行中です (PID: $old_pid)"
-      echo "       強制再起動する場合: kill $old_pid && rm $PID_FILE"
+    old_pid="$(cat "$PID_FILE" || true)"
+    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+      echo "ERROR: task-runner は既に実行中です (${PID_FILE}, PID: $old_pid)"
+      echo "  強制再起動する場合: kill $old_pid && rm $PID_FILE"
       exit 1
     fi
     rm -f "$PID_FILE"
@@ -109,8 +102,93 @@ check_pid() {
 
 cleanup() {
   log "シャットダウン..."
-  rm -f "$PID_FILE"
+  rm -f "$PID_FILE" || true
   exit 0
+}
+
+# ----------------------------
+# 排他（短時間ロック / 依存少なめ）
+# ----------------------------
+acquire_lock() {
+  local tries=50
+  local i=0
+  while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    i=$((i + 1))
+    if [[ $i -ge $tries ]]; then
+      log "ERROR: lock を取得できませんでした: $LOCK_DIR"
+      return 1
+    fi
+    sleep 0.1
+  done
+  return 0
+}
+
+release_lock() {
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+# TASKS.md から未着手タスクを1つ返す: "role task_id"
+next_pending() {
+  local line filter
+  if [[ -n "$ROLE" ]]; then
+    filter="^- \\[ \\] @$ROLE "
+    line="$(grep -E "$filter" "$TASKS_FILE" | head -1)" || true
+  else
+    line="$(grep -E '^- \[ \] @' "$TASKS_FILE" | head -1)" || true
+  fi
+
+  [[ -z "$line" ]] && return 1
+
+  # 例: - [ ] @pm T-001 — 説明
+  local role task_id
+  role="$(echo "$line" | awk '{ print $4 }' | sed 's/^@//')"
+  task_id="$(echo "$line" | awk '{ print $5 }')"
+  [[ -z "$role" || -z "$task_id" ]] && return 1
+  echo "$role $task_id"
+}
+
+# TASKS.md のチェックを更新する（[ ]/[>] -> [x]/[!]/[>]）
+mark_task() {
+  local role="$1" task_id="$2" mark="$3"
+  sed -i '' -E \
+    "s/^-[[:space:]]\\[[[:space:]>]\\][[:space:]]@$role[[:space:]]*$task_id[[:space:]]/- [$mark] @$role $task_id /" \
+    "$TASKS_FILE"
+}
+
+# 未着手([ ]) を CLAIM([>]) にする（ロック中に実施）
+claim_task() {
+  local role="$1" task_id="$2"
+  if grep -q -E "^- \\[ \\] @$role[[:space:]]*$task_id[[:space:]]" "$TASKS_FILE"; then
+    sed -i '' -E \
+      "s/^- \\[ \\] @$role[[:space:]]*$task_id[[:space:]]/- [>] @$role $task_id /" \
+      "$TASKS_FILE"
+    return 0
+  fi
+  return 1
+}
+
+dry_run() {
+  log "=== DRY-RUN: 未完了タスク ==="
+  local found=false
+  while IFS= read -r line; do
+    echo "$line" | grep -qE '^- \[ \] @' || continue
+    local role task_id desc task_file prompt_file
+    role="$(echo "$line" | awk '{ print $4 }' | sed 's/^@//')"
+    task_id="$(echo "$line" | awk '{ print $5 }')"
+    [[ -z "$task_id" ]] && continue
+    if [[ -n "$ROLE" && "$role" != "$ROLE" ]]; then
+      continue
+    fi
+    found=true
+    desc="$(echo "$line" | sed "s/^.*— //")"
+    task_file="$TASKS_DIR/${task_id}.md"
+    prompt_file="$PROMPTS_DIR/${role}.md"
+    log "@${role} ${task_id} — ${desc}"
+    [[ -f "$task_file" ]] && echo "  task:   $task_file" || echo "  task:   NOT FOUND"
+    [[ -f "$prompt_file" ]] && echo "  prompt: $prompt_file" || echo "  prompt: NOT FOUND"
+  done < "$TASKS_FILE"
+
+  $found || log "未完了タスクなし"
 }
 
 run_task() {
@@ -119,7 +197,6 @@ run_task() {
   local prompt_file="$PROMPTS_DIR/${role}.md"
   local log_file="$LOGS_DIR/${task_id}.log"
 
-  # バリデーション
   if [[ ! -f "$task_file" ]]; then
     log "ERROR: タスクファイルが見つかりません: $task_file"
     mark_task "$role" "$task_id" "!"
@@ -133,7 +210,6 @@ run_task() {
 
   log "=== タスク開始: @${role} ${task_id} ==="
 
-  # ロール用システムプロンプト + セキュリティルールを結合
   local security_file="$PROMPTS_DIR/_security.md"
   local system_prompt
   system_prompt="$(cat "$prompt_file")"
@@ -141,19 +217,17 @@ run_task() {
     system_prompt="$system_prompt"$'\n\n'"$(cat "$security_file")"
   fi
 
-  # タスク本文を取得
   local prompt
   prompt="$(cat "$task_file")"
 
-  # claude コマンド組み立て
   local claude_args=(-p)
   claude_args+=(--allowedTools "Bash Edit Read Write Glob Grep NotebookEdit")
   claude_args+=(--append-system-prompt "$system_prompt")
+  claude_args+=(--permission "$CLAUDE_PERMISSION")
   if [[ -n "$CLAUDE_MODEL" ]]; then
     claude_args+=(--model "$CLAUDE_MODEL")
   fi
 
-  # 既存ログがあればアーカイブに移動
   if [[ -f "$log_file" ]]; then
     local archive_dir="$LOGS_DIR/archive"
     mkdir -p "$archive_dir"
@@ -163,9 +237,9 @@ run_task() {
     log "既存ログをアーカイブ: archive/${task_id}_${ts}.log"
   fi
 
-  # 実行
   local exit_code=0
-  log "role=$role, claude ${claude_args[0]} ${claude_args[1]} ${claude_args[2]} (prompt: ${#prompt} chars)"
+  log "role=$role, permission=$CLAUDE_PERMISSION, model=${CLAUDE_MODEL:-default}"
+
   {
     echo "=== Task: @${role} ${task_id} ==="
     echo "=== Started: $(date '+%Y-%m-%d %H:%M:%S') ==="
@@ -175,7 +249,6 @@ run_task() {
     echo "=== Finished: $(date '+%Y-%m-%d %H:%M:%S') ==="
   } > "$log_file" 2>&1 || exit_code=$?
 
-  # TASKS.md のチェック更新
   if [[ $exit_code -eq 0 ]]; then
     mark_task "$role" "$task_id" "x"
     log "=== タスク完了: @${role} ${task_id} ==="
@@ -190,88 +263,83 @@ run_task() {
 # ============================================================
 # 引数パース
 # ============================================================
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --once)       ONCE=true; shift ;;
-    --dry-run)    DRY_RUN=true; shift ;;
-    --interval)   INTERVAL="$2"; shift 2 ;;
-    --model)      CLAUDE_MODEL="$2"; shift 2 ;;
+    --role) ROLE="$2"; shift 2 ;;
+    --once) ONCE=true; shift ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --interval) INTERVAL="$2"; shift 2 ;;
+    --model) CLAUDE_MODEL="$2"; shift 2 ;;
     --permission) CLAUDE_PERMISSION="$2"; shift 2 ;;
-    --list)       list_tasks; exit 0 ;;
-    -h|--help)    usage; exit 0 ;;
-    *)            echo "Unknown option: $1"; usage; exit 1 ;;
+    --list) list_tasks; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      echo "Unknown option: $1"
+      usage
+      exit 1
+      ;;
   esac
 done
 
 # ============================================================
 # メイン
 # ============================================================
-
-if [[ ! -f "$TASKS_FILE" ]]; then
-  echo "ERROR: $TASKS_FILE が見つかりません"
-  exit 1
-fi
+require_tasks_file
+validate_role
+set_pid_file
 
 trap cleanup SIGINT SIGTERM
 mkdir -p "$LOGS_DIR"
 
-# dry-run
 if $DRY_RUN; then
-  log "=== DRY-RUN: 未完了タスク ==="
-  found=false
-  while IFS= read -r line; do
-    echo "$line" | grep -q '^- \[ \] @' || continue
-    role="$(echo "$line" | awk '{ print $4 }' | sed 's/^@//')"
-    task_id="$(echo "$line" | awk '{ print $5 }')"
-    [[ -z "$task_id" ]] && continue
-    found=true
-    desc="$(echo "$line" | sed "s/^.*— //")"
-    task_file="$TASKS_DIR/${task_id}.md"
-    prompt_file="$PROMPTS_DIR/${role}.md"
-    log "@${role} ${task_id} — ${desc}"
-    if [[ -f "$task_file" ]]; then
-      echo "  task:   $task_file"
-    else
-      echo "  task:   NOT FOUND"
-    fi
-    if [[ -f "$prompt_file" ]]; then
-      echo "  prompt: $prompt_file"
-    else
-      echo "  prompt: NOT FOUND"
-    fi
-  done < "$TASKS_FILE"
-  $found || log "未完了タスクなし"
+  dry_run
   exit 0
 fi
 
 check_pid
 echo $$ > "$PID_FILE"
 
-log "task-runner 起動 (interval=${INTERVAL}s, once=$ONCE)"
+log "task-runner 起動 (interval=${INTERVAL}s, once=$ONCE, role=${ROLE:-all})"
 log "project: $PROJECT_DIR"
 log "tasks:   $TASKS_FILE"
 log "prompts: $PROMPTS_DIR"
+log "pid:     $PID_FILE"
 
 while true; do
-  result="$(next_pending)"
+  claimed=""
 
-  if [[ -n "$result" ]]; then
-    role="$(echo "$result" | awk '{ print $1 }')"
-    task_id="$(echo "$result" | awk '{ print $2 }')"
+  # 1) ロック中に「選ぶ→CLAIM」を原子的に
+  if acquire_lock; then
+    result="$(next_pending || true)"
+    if [[ -n "$result" ]]; then
+      role="$(echo "$result" | awk '{ print $1 }')"
+      task_id="$(echo "$result" | awk '{ print $2 }')"
+      if claim_task "$role" "$task_id"; then
+        claimed="$role $task_id"
+      fi
+    fi
+    release_lock
+  fi
+
+  # 2) CLAIMできたものを実行（実行中はロックしない）
+  if [[ -n "$claimed" ]]; then
+    role="$(echo "$claimed" | awk '{ print $1 }')"
+    task_id="$(echo "$claimed" | awk '{ print $2 }')"
     run_task "$role" "$task_id" || true
     if $ONCE; then
       log "--once モードのため終了"
       break
     fi
-  else
-    if $ONCE; then
-      log "未完了タスクなし。終了"
-      break
-    fi
-    log "未完了タスクなし。${INTERVAL}秒後に再チェック..."
-    sleep "$INTERVAL"
+    continue
   fi
+
+  # 未完了なし / 取り負け
+  if $ONCE; then
+    log "未完了タスクなし（またはCLAIMできず）。終了"
+    break
+  fi
+  log "未完了タスクなし（またはCLAIMできず）。${INTERVAL}秒後に再チェック..."
+  sleep "$INTERVAL"
 done
 
-rm -f "$PID_FILE"
+rm -f "$PID_FILE" || true
