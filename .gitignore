@@ -44,6 +44,7 @@ tasks/logs/
 
 # Task runner
 *.pid
+.worktrees/
 
 # Playwright
 /test-results/

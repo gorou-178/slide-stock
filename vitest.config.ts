@@ -11,7 +11,7 @@ export default defineWorkersConfig(async () => {
   return {
     test: {
       globals: true,
-      exclude: ["e2e/**", "node_modules/**"],
+      exclude: ["e2e/**", "node_modules/**", ".worktrees/**"],
       poolOptions: {
         workers: {
           wrangler: {
