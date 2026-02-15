@@ -44,13 +44,13 @@
 ## 1. Now（今動いているタスク）
 
 ### PM
-- [ ] @pm T-100 — CI/CD方針とDoDを plan.md に明文化
+- [!] @pm T-100 — CI/CD方針とDoDを plan.md に明文化
 
 ### QA
-- [ ] @qa T-110 — 現状テスト棚卸しとCI実行コマンド定義
+- [!] @qa T-110 — 現状テスト棚卸しとCI実行コマンド定義
 
 ### DEV
-- [ ] @dev T-120 — PR(main)でCI実行するGitHub Actions workflow追加
+- [!] @dev T-120 — PR(main)でCI実行するGitHub Actions workflow追加
 
 ---
 
@@ -70,32 +70,32 @@
 ## 3. Next（準備済み）
 
 ### Refactor（Component/TDD）
-- [ ] @pm T-200 — コンポーネント境界と移行順を定義
-- [ ] @qa T-210 — リファクタ安全網テスト追加
-- [ ] @dev T-220 — 共通UI抽出（TDD段階移行）
+- [!] @pm T-200 — コンポーネント境界と移行順を定義
+- [!] @qa T-210 — リファクタ安全網テスト追加
+- [!] @dev T-220 — 共通UI抽出（TDD段階移行）
 
 ### Security
-- [ ] @pm T-300 — API/Session棚卸しと改善方針
-- [ ] @dev T-310 — セッション管理セキュア化
-- [ ] @dev T-311 — API callベストプラクティス化
+- [!] @pm T-300 — API/Session棚卸しと改善方針
+- [!] @dev T-310 — セッション管理セキュア化
+- [!] @dev T-311 — API callベストプラクティス化
 
 ### Production
-- [ ] @pm T-400 — 本番運用設計（環境分離・Secrets・deploy）
-- [ ] @dev T-410 — Production build設定整備
-- [ ] @dev T-420 — production merge後deploy workflow追加
-- [ ] @qa T-421 — 本番デプロイ確認（slide-stock.gorou.dev）
+- [!] @pm T-400 — 本番運用設計（環境分離・Secrets・deploy）
+- [!] @dev T-410 — Production build設定整備
+- [!] @dev T-420 — production merge後deploy workflow追加
+- [!] @qa T-421 — 本番デプロイ確認（slide-stock.gorou.dev）
 
 ---
 
 ## 4. Blocked
-- [ ] @pm B-001 — デプロイ先最終確定
-- [ ] @pm B-002 — Secrets一覧確定
+- [!] @pm B-001 — デプロイ先最終確定
+- [!] @pm B-002 — Secrets一覧確定
 
 ---
 
 ## 5. Backlog
-- [ ] @pm T-900 — 監視方針（Sentry等）
-- [ ] @qa T-901 — E2E強化
+- [!] @pm T-900 — 監視方針（Sentry等）
+- [!] @qa T-901 — E2E強化
 
 ---
 
