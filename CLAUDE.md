@@ -118,23 +118,16 @@ Cloudflareを基盤とし、運用コストを極力抑えつつ、
 
 ---
 
-## 10. 自走タスク運用（tmux + worktree 分離）
+## 10. タスク運用
 
-このリポジトリは `tasks/TASKS.md` をSSOTとして、PM/QA/DEV の3ロールが並列に自走できるようにする。
+詳細は [docs/task-workflow.md](docs/task-workflow.md) を参照。
 
-### 前提
-- `tasks/TASKS.md` のタスク行は以下の形式で書く（CLAIMを使う）  
-  - `- [ ] @pm T-001 — ...`  未着手  
-  - `- [>] @pm T-001 — ...`  CLAIM済み（実行中）  
-  - `- [x] @pm T-001 — ...`  完了  
-  - `- [!] @pm T-001 — ...`  失敗
+- `tasks/TASKS.md` をSSOTとし、PM/QA/DEV の3ロールが並列にタスクを実行する
+- **自律モード**: `./scripts/run-agents-tmux.sh` でtmux常駐起動
+- **対話モード**: Claudeセッション上で直接タスクを実行（リモート対応）
 
-- `scripts/task-runner.sh` は並列安全（ROLE/CLAIM/lock/permission反映）になっていること
-- worktree 分離モードでは、TASKS/lock/log を **共通ディレクトリ**（メインの `tasks/`）へ寄せる
-
----
-
-### 1) 初回セットアップ（worktree作成）
-```bash
-./scripts/run-agents-tmux-worktrees.sh --init
-```
+### タスク書式
+- `- [ ] @role T-xxx — 説明`  未着手
+- `- [>] @role T-xxx — 説明`  CLAIM済み（実行中）
+- `- [x] @role T-xxx — 説明`  完了
+- `- [!] @role T-xxx — 説明`  失敗
