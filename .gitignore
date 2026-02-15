@@ -1,6 +1,14 @@
 # Node
 node_modules/
 
+# Astro
+dist/
+.astro/
+
+# Cloudflare
+.wrangler/
+.dev.vars
+
 ## OS Files
 # Windows
 Thumbs.db
@@ -18,6 +26,10 @@ $RECYCLE.BIN/
 # Claude
 .claude/settings.local.json
 
+# Environment variables
+.env
+.env.*
+
 # secret files
 *.pem
 *.key
@@ -28,6 +40,16 @@ $RECYCLE.BIN/
 
 # Log files
 *.log
+tasks/logs/
+
+# Task runner
+tasks/.runner.pid
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
 
 # Temporary files
 *.tmp
