@@ -144,7 +144,8 @@ test.describe("認証バイパス: E2E テスト", () => {
         });
       });
 
-      // Act
+      // Act: ページをナビゲートしてから API を呼ぶ（about:blank では相対URLを解決できない）
+      await page.goto("/");
       const response = await page.evaluate(async () => {
         const res = await fetch("/api/me");
         return res.json();

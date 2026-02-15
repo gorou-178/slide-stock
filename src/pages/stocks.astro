@@ -1,0 +1,43 @@
+---
+---
+
+<html lang="ja">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width" />
+		<title>ストック一覧 - Slide Stock</title>
+	</head>
+	<body>
+		<nav aria-label="メインナビゲーション">
+			<a href="/">Slide Stock</a>
+			<span id="user-name"></span>
+		</nav>
+		<main>
+			<h1>ストック一覧</h1>
+		</main>
+		<script>
+			const cookie = document.cookie
+				.split("; ")
+				.find((c) => c.startsWith("test_session="));
+			if (!cookie) {
+				window.location.replace("/login");
+			} else {
+				fetch("/api/me")
+					.then((res) => {
+						if (!res.ok) throw new Error("Unauthorized");
+						return res.json();
+					})
+					.then((user: { name?: string }) => {
+						const el = document.getElementById("user-name");
+						if (el && user.name) {
+							el.textContent = user.name;
+						}
+					})
+					.catch(() => {
+						window.location.replace("/login");
+					});
+			}
+		</script>
+	</body>
+</html>

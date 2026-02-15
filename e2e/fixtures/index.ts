@@ -28,14 +28,11 @@ async function setupAuthenticatedPage(
   page: Page,
   user: TestUser
 ): Promise<void> {
-  // API リクエストに X-Test-User-Id ヘッダーを付与する
-  await page.route("**/api/**", (route) => {
-    const headers = {
-      ...route.request().headers(),
-      "X-Test-User-Id": user.id,
-      "X-Test-User-Email": user.email,
-    };
-    route.continue({ headers });
+  // ブラウザレベルで全リクエストに認証ヘッダーを付与する
+  // page.route よりも先に適用されるため、テスト側の route.fulfill() でもヘッダーが見える
+  await page.setExtraHTTPHeaders({
+    "X-Test-User-Id": user.id,
+    "X-Test-User-Email": user.email,
   });
 
   // フロントエンド用にテスト用セッション Cookie をセット
