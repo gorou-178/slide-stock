@@ -224,7 +224,7 @@ run_task() {
   local claude_args=(-p)
   claude_args+=(--allowedTools "Bash Edit Read Write Glob Grep NotebookEdit")
   claude_args+=(--append-system-prompt "$system_prompt")
-  claude_args+=(--permission "$CLAUDE_PERMISSION")
+  claude_args+=(--permission-mode "$CLAUDE_PERMISSION")
   if [[ -n "$CLAUDE_MODEL" ]]; then
     claude_args+=(--model "$CLAUDE_MODEL")
   fi
@@ -239,16 +239,19 @@ run_task() {
   fi
 
   local exit_code=0
+  local claude_exit=0
   log "role=$role, permission=$CLAUDE_PERMISSION, model=${CLAUDE_MODEL:-default}"
 
   {
     echo "=== Task: @${role} ${task_id} ==="
     echo "=== Started: $(date '+%Y-%m-%d %H:%M:%S') ==="
     echo ""
-    echo "$prompt" | (cd "$PROJECT_DIR" && claude "${claude_args[@]}") 2>&1
+    echo "$prompt" | (cd "$PROJECT_DIR" && claude "${claude_args[@]}") 2>&1 || claude_exit=$?
     echo ""
+    echo "=== Exit code: ${claude_exit} ==="
     echo "=== Finished: $(date '+%Y-%m-%d %H:%M:%S') ==="
-  } > "$log_file" 2>&1 || exit_code=$?
+  } > >(tee "$log_file") 2>&1
+  exit_code=$claude_exit
 
   if [[ $exit_code -eq 0 ]]; then
     mark_task "$role" "$task_id" "x"
