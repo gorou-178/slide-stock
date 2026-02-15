@@ -47,6 +47,7 @@ tasks/.runner.pid
 
 # Playwright
 /test-results/
+/e2e/test-results/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
