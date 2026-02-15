@@ -43,7 +43,7 @@ $RECYCLE.BIN/
 tasks/logs/
 
 # Task runner
-tasks/.runner.pid
+*.pid
 
 # Playwright
 /test-results/
