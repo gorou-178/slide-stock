@@ -10,7 +10,7 @@ import StockList from '../components/StockList.astro';
 </BaseLayout>
 
 <script>
-  import { fetchMe, fetchStocks, createStock, type StockItem } from '../lib/api-client';
+  import { fetchMe, fetchStocks, fetchStock, createStock, type StockItem } from '../lib/api-client';
 
   const PROVIDER_LABELS: Record<string, string> = {
     speakerdeck: 'SpeakerDeck',
@@ -95,6 +95,55 @@ import StockList from '../components/StockList.astro';
     return article;
   }
 
+  // --- ポーリング ---
+
+  const POLL_INTERVAL_MS = 3000;
+  const MAX_POLL_COUNT = 40; // 最大2分で停止
+  const pendingStockIds = new Set<string>();
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let pollCount = 0;
+
+  function updateStockCard(stock: StockItem) {
+    const card = stockList.querySelector(`[data-stock-id="${stock.id}"]`);
+    if (!card) return;
+    const newCard = createStockCard(stock);
+    card.replaceWith(newCard);
+  }
+
+  async function pollPendingStocks() {
+    pollCount++;
+    const ids = [...pendingStockIds];
+
+    for (const id of ids) {
+      try {
+        const stock = await fetchStock(id);
+        if (stock.status !== 'pending') {
+          pendingStockIds.delete(id);
+          updateStockCard(stock);
+        }
+      } catch {
+        // エラー時はそのまま次回ポーリングに任せる
+      }
+    }
+
+    if (pendingStockIds.size === 0 || pollCount >= MAX_POLL_COUNT) {
+      stopPolling();
+    }
+  }
+
+  function startPolling() {
+    if (pollTimer || pendingStockIds.size === 0) return;
+    pollCount = 0;
+    pollTimer = setInterval(pollPendingStocks, POLL_INTERVAL_MS);
+  }
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
   // --- 初期化 ---
 
   let nextCursor: string | null = null;
@@ -136,6 +185,13 @@ import StockList from '../components/StockList.astro';
           stockList.appendChild(createStockCard(stock));
         }
       }
+
+      for (const stock of data.items) {
+        if (stock.status === 'pending') {
+          pendingStockIds.add(stock.id);
+        }
+      }
+      startPolling();
 
       nextCursor = data.next_cursor;
       loadMoreContainer.hidden = !data.has_more;
@@ -188,6 +244,10 @@ import StockList from '../components/StockList.astro';
         stockList.appendChild(createStockCard(stock));
       }
       urlInput.value = '';
+      if (stock.status === 'pending') {
+        pendingStockIds.add(stock.id);
+        startPolling();
+      }
     } catch (err: unknown) {
       if (err && typeof err === 'object' && 'status' in err) {
         const apiErr = err as { status: number; message: string };

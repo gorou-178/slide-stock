@@ -275,11 +275,14 @@ binding = "OEMBED_QUEUE"
 
 [[queues.consumers]]
 queue = "oembed-fetch"
-max_batch_size = 5
-max_batch_timeout = 30
+max_batch_size = 2
+max_batch_timeout = 3
 max_retries = 3
 dead_letter_queue = "oembed-fetch-dlq"
 ```
+
+> **設計判断:** `max_batch_timeout = 3`（秒）に設定し、ユーザーがスライド登録後すぐにメタデータが反映される体験を優先する。
+> 大量メッセージが同時に来る想定はないため、バッチ効率よりレスポンス速度を重視した。
 
 ---
 
