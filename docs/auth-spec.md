@@ -56,8 +56,14 @@ sequenceDiagram
 
 **処理:**
 1. CSRF対策用の `state` パラメータを生成（ランダム文字列 32バイト hex）
-2. `state` を署名付き Cookie (`auth_state`) にセット（Max-Age: 300秒）
+2. `state` を平文 Cookie (`auth_state`) にセット（HttpOnly; SameSite=Lax; Max-Age: 300秒）
 3. Google Authorization Endpoint にリダイレクト
+
+> **設計判断:** `auth_state` Cookie は署名しない（平文）。理由:
+> - `state` はワンタイムのランダム値であり、予測困難（32バイト hex = 256ビットエントロピー）
+> - Cookie と Query パラメータの `state` が一致することのみを検証すれば CSRF 対策として十分
+> - 攻撃者が Cookie を改ざんしても、Google から返却される `state` と一致しないため無害
+> - 署名を省略することで実装をシンプルに保つ
 
 **Google Authorization URL 構成:**
 ```
@@ -94,7 +100,7 @@ Google からのコールバックを処理するエンドポイント。
 5. `google_sub`, `email`, `name` を抽出
 6. `users` テーブルに upsert（`google_sub` で検索、存在すれば email/name 更新）
 7. セッション Cookie を発行（→ セクション 5）
-8. `302 Redirect` でフロントエンドのトップページ（`/`）にリダイレクト
+8. `302 Redirect` でトップページ（`/`）にリダイレクト（同一オリジンのため相対パス）
 
 **Google Token Endpoint:**
 ```
@@ -186,7 +192,13 @@ GET https://www.googleapis.com/oauth2/v3/certs
 ### 実装ライブラリ
 
 Workers 環境では Web Crypto API が利用可能。
-軽量な JWT 検証ライブラリ（jose 等）の利用を推奨する。
+**JWT 検証には [jose](https://github.com/panva/jose) ライブラリを使用する。**
+
+選定理由:
+- Web Crypto API ベースで Workers 環境に完全対応
+- JWKS エンドポイントからの公開鍵取得・キャッシュ機能を内蔵（`createRemoteJWKSet`）
+- Edge Runtime / Cloudflare Workers での実績が豊富
+- 軽量かつ依存ゼロ
 
 ---
 
@@ -234,7 +246,7 @@ HMAC-SHA256(base64url(payload), SESSION_SECRET)
 | Name | `session` | シンプルで明確 |
 | Value | `{payload}.{signature}` | 上記ペイロード形式 |
 | HttpOnly | `true` | JS からアクセス不可にし XSS 対策 |
-| Secure | `true` | HTTPS のみ送信（本番前提） |
+| Secure | 環境依存 | 本番: `true`（HTTPS）。ローカル: `false`（HTTP）。`CALLBACK_URL` のスキームで判定 |
 | SameSite | `Lax` | CSRF 対策。GET リダイレクト（OAuth callback）は許可 |
 | Path | `/api` | API エンドポイントのみに送信。フロントエンドの静的配信に不要な Cookie を付与しない |
 | Max-Age | `604800` | 7日間（= 7 × 24 × 60 × 60） |
@@ -328,28 +340,73 @@ Set-Cookie: session=; HttpOnly; Secure; SameSite=Lax; Path=/api; Max-Age=0
 
 ---
 
-## 8. コールバック URL
+## 8. コールバック URL とオリジン構成
 
-### 開発環境
+### オリジン構成
+
+| 環境 | フロントエンド | API | 構成 |
+|------|-------------|-----|------|
+| 本番 | `https://slide-stock.gorou.dev` | `https://slide-stock.gorou.dev/api/*` | 同一オリジン（Pages + Workers） |
+| ローカル | `http://localhost:4321` | `http://localhost:8787/api/*` | Vite プロキシで同一オリジン化 |
+
+### ローカル開発のプロキシ構成
+
+ローカルでは Astro（:4321）と Workers（:8787）が別ポートで起動するため、
+`astro.config.mjs` に Vite プロキシを設定し、ブラウザからは `:4321` のみでアクセスする。
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  vite: {
+    server: {
+      proxy: {
+        '/api': 'http://localhost:8787',
+      },
+    },
+  },
+});
+```
+
+**ローカルでの Google ログインフロー:**
 
 ```
-http://localhost:8787/api/auth/callback
+1. ブラウザ: http://localhost:4321 でフロントエンドにアクセス
+2. 「Google でログイン」→ GET http://localhost:4321/api/auth/login
+3. Vite プロキシが :8787 に転送 → Worker が Google にリダイレクト
+4. Google 認証後 → http://localhost:4321/api/auth/callback?code=xxx&state=yyy
+5. Vite プロキシが :8787 に転送 → Worker が Cookie 発行 + 302 /
+6. ブラウザが http://localhost:4321/ に遷移（Astro フロントエンド）✓
 ```
 
-### 本番環境
+> **ポイント:** Cookie は `:4321` のレスポンスとしてブラウザに届くため、
+> 以降の `/api/*` リクエストにも Cookie が自動付与される。
 
-```
-https://slide-stock.gorou.dev/api/auth/callback
-```
+### コールバック URL
+
+| 環境 | CALLBACK_URL |
+|------|-------------|
+| ローカル | `http://localhost:4321/api/auth/callback` |
+| 本番 | `https://slide-stock.gorou.dev/api/auth/callback` |
 
 ### Google Cloud Console 設定
 
 - **承認済みの JavaScript オリジン:**
-  - `http://localhost:8787`（開発）
+  - `http://localhost:4321`（開発）
   - `https://slide-stock.gorou.dev`（本番）
 - **承認済みのリダイレクト URI:**
-  - `http://localhost:8787/api/auth/callback`（開発）
+  - `http://localhost:4321/api/auth/callback`（開発）
   - `https://slide-stock.gorou.dev/api/auth/callback`（本番）
+
+### ローカル起動手順
+
+```bash
+# ターミナル 1: API
+npm run dev:worker      # → http://localhost:8787
+
+# ターミナル 2: フロントエンド（プロキシ込み）
+npm run dev             # → http://localhost:4321
+                        #   /api/* は :8787 に自動転送
+```
 
 ---
 
@@ -361,8 +418,10 @@ https://slide-stock.gorou.dev/api/auth/callback
 | `GOOGLE_CLIENT_SECRET` | Secret | Google OAuth Client Secret | Google Cloud Console |
 | `SESSION_SECRET` | Secret | セッション Cookie 署名用キー（32バイト以上のランダム文字列） | 自分で生成（`openssl rand -hex 32`） |
 | `CALLBACK_URL` | 環境変数 | コールバック URL（環境ごとに異なる） | wrangler.toml / .dev.vars |
-| `FRONTEND_URL` | 環境変数 | フロントエンド URL（リダイレクト先） | wrangler.toml / .dev.vars |
 | `TEST_MODE` | 環境変数 | テストモードフラグ（`"true"` で bypass 有効） | .dev.vars のみ |
+
+> **注:** `FRONTEND_URL` は不要。本番は同一オリジン、ローカルは Vite プロキシで同一オリジン化するため、
+> コールバック後のリダイレクトは相対パス（`/`）で行う。
 
 ### .dev.vars（開発環境 / gitignore 対象）
 
@@ -370,15 +429,14 @@ https://slide-stock.gorou.dev/api/auth/callback
 GOOGLE_CLIENT_ID=xxx.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-xxx
 SESSION_SECRET=<openssl rand -hex 32 の出力>
-CALLBACK_URL=http://localhost:8787/api/auth/callback
-FRONTEND_URL=http://localhost:4321
+CALLBACK_URL=http://localhost:4321/api/auth/callback
 TEST_MODE=true
 ```
 
 ### 本番環境
 
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET` は `wrangler secret put` で設定
-- `CALLBACK_URL`, `FRONTEND_URL` は `wrangler.toml` の `[vars]` で設定
+- `CALLBACK_URL` は `wrangler.toml` の `[vars]` で設定
 
 ---
 

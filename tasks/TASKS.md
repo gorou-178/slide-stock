@@ -67,20 +67,9 @@
 
 ---
 
-## 3. Next（準備済み） — Phase 1: 仕様策定 & 基盤整備
+## 3. Next（準備済み） — Phase 4: フロントエンド
 
-### PM — 各領域の仕様策定（依存なし・並列実行可）
-- [x] @pm T-500 — Google OIDC認証仕様策定（コールバックURL、セッション形式・有効期限、ログアウトフロー）→ docs/auth-spec.md
-- [x] @pm T-510 — プロバイダ検出仕様策定（各プロバイダのURLパターン、正規化ルール、バリデーションエラー定義）→ docs/provider-spec.md
-- [x] @pm T-520 — oEmbed/Queue処理仕様策定（各プロバイダのoEmbedエンドポイント、Queueメッセージスキーマ、リトライ・失敗ポリシー）→ docs/oembed-spec.md
-- [x] @pm T-530 — Stock API仕様策定（リクエスト/レスポンススキーマ、ページネーション方式、重複URL対応、エラーレスポンス形式）→ docs/stock-api-spec.md
-- [x] @pm T-540 — Memo API仕様策定（リクエスト/レスポンス、upsert動作、最大文字数、空メモ対応）→ docs/memo-api-spec.md
-- [x] @pm T-550 — フロントエンドUI仕様策定（コンポーネント階層、画面レイアウト、エラー/ローディング/空状態の定義）→ docs/ui-spec.md
-
-### DEV — 基盤整備（依存なし・並列実行可）
-- [x] @dev T-535 — worker/index.ts ルーティングリファクタ（現在のif/elseからハンドラマップへ。パスパラメータ対応）
-- [x] @dev T-570 — APIエラーハンドリング統一 & CORS設定（Pages↔Workers間のクロスオリジン対応 or 同一オリジン化）
-- [x] @dev T-506 — 環境変数・Secrets設定（GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET, CALLBACK_URL, FRONTEND_URL を .dev.vars / wrangler.toml に追加。詳細: docs/auth-spec.md セクション9）[dep: T-500]
+<!-- Phase 3 完了。Phase 4 タスクは Backlog から移動予定 -->
 
 ---
 
@@ -89,34 +78,26 @@
 
 ---
 
-## 5. Backlog（Phase 2〜5: Phase 1 完了後にコメント解除して Next へ移動）
+## 5. Backlog（Phase 3〜5: Phase 2 完了後に Next へ移動）
 
-<!-- === Phase 2: コアバックエンド ===
-  - [ ] @qa T-507 — OIDCログインエンドポイントのユニットテスト作成（GET /api/auth/login のリダイレクト検証、GET /api/auth/callback の state照合・Token交換mock・セッションCookie発行検証。仕様: docs/auth-spec.md セクション3,4）[dep: T-500]
-  - [ ] @dev T-501 — Google OIDCログインエンドポイント実装（GET /api/auth/login: Google認証URLリダイレクト、GET /api/auth/callback: Authorization Code→Token交換→ID Token検証→ユーザーupsert→セッションCookie発行→302リダイレクト。仕様: docs/auth-spec.md）[dep: T-500, T-506]
-  - [ ] @qa T-512 — プロバイダ検出ユニットテスト作成（各プロバイダの正常URL・不正URL・エッジケース。テストケース: docs/provider-spec.md セクション6）[dep: T-510]
-  - [ ] @dev T-511 — プロバイダ検出モジュール実装（worker/lib/provider.ts: detectProvider(url) → { provider, canonicalUrl } or ProviderError。仕様: docs/provider-spec.md セクション1〜5）[dep: T-510, T-512]
-  - [ ] @dev T-521 — oEmbedフェッチサービス実装（worker/lib/oembed.ts: SpeakerDeck/DocswellのoEmbed取得、Google Slidesのembed URL構築）[dep: T-520]
-  - [ ] @dev T-522 — Cloudflare Queues設定（wrangler.tomlにproducer/consumer binding追加）[dep: T-520]
--->
 
-<!-- === Phase 3: APIエンドポイント ===
-  - [ ] @qa T-508 — 認証ミドルウェアのユニットテスト作成（署名付きCookie検証、有効期限切れ、改ざん検知、TEST_MODE共存。仕様: docs/auth-spec.md セクション5）[dep: T-501]
-  - [ ] @dev T-502 — 本番用認証ミドルウェア実装（HMAC-SHA256署名Cookie検証→AuthContext注入。TEST_MODE時は既存bypass維持。仕様: docs/auth-spec.md セクション5）[dep: T-501, T-508]
+=== Phase 3: APIエンドポイント ===
+  - [x] @qa T-508 — 認証ミドルウェアのユニットテスト作成（11テスト）
+  - [x] @dev T-502 — 本番用認証ミドルウェア実装（HMAC-SHA256署名Cookie検証→AuthContext注入）
   - [ ] @qa T-505 — 認証フローE2Eテスト（ログイン→コールバック→セッション発行→API認証→ログアウトの全フロー検証）[dep: T-502, T-504]
-  - [ ] @dev T-523 — Queueコンシューマー実装（メッセージ受信→oEmbed取得→D1のstock更新: status=ready or failed）[dep: T-521, T-522]
-  - [ ] @qa T-524 — oEmbed/Queueのユニットテスト（HTTPレスポンスmock、失敗・リトライシナリオ）[dep: T-521, T-523]
-  - [ ] @dev T-531 — POST /stocks 実装（URL検証→プロバイダ検出→重複チェック→stock挿入(pending)→Queue送信→201返却）[dep: T-502, T-511, T-522, T-530]
-  - [ ] @dev T-532 — GET /stocks 実装（認証ユーザーのストック一覧取得、created_at降順、メモ結合、ページネーション）[dep: T-502, T-530]
-  - [ ] @dev T-533 — GET /stocks/:id 実装（単一ストック取得、メモ付き、所有権チェック）[dep: T-502, T-530]
-  - [ ] @dev T-534 — DELETE /stocks/:id 実装（ストック＋関連メモ削除、所有権チェック、204返却）[dep: T-502, T-530]
-  - [ ] @qa T-536 — Stock APIユニットテスト（CRUD全パス、401/404/409/400、ページネーション、ユーザー間分離）[dep: T-531〜T-534]
-  - [ ] @dev T-541 — PUT /stocks/:id/memo 実装（メモupsert、stock所有権チェック）[dep: T-502, T-540]
-  - [ ] @dev T-542 — GET /stocks/:id/memo 実装（メモ取得、404対応）[dep: T-502, T-540]
-  - [ ] @qa T-543 — Memo APIユニットテスト（作成・更新・取得、存在しないstock、所有権分離）[dep: T-541, T-542]
--->
+  - [x] @dev T-523 — Queueコンシューマー実装（メッセージ受信→oEmbed取得→D1のstock更新: status=ready or failed）
+  - [x] @qa T-524 — oEmbed/Queueのユニットテスト（HTTPレスポンスmock、失敗・リトライシナリオ、8テスト）
+  - [x] @dev T-531 — POST /stocks 実装（URL検証→プロバイダ検出→重複チェック→stock挿入(pending)→Queue送信→201返却）
+  - [x] @dev T-532 — GET /stocks 実装（認証ユーザーのストック一覧取得、created_at降順、メモ結合、ページネーション）
+  - [x] @dev T-533 — GET /stocks/:id 実装（単一ストック取得、メモ付き、所有権チェック）
+  - [x] @dev T-534 — DELETE /stocks/:id 実装（ストック＋関連メモ削除、所有権チェック、204返却）
+  - [x] @qa T-536 — Stock APIユニットテスト（CRUD全パス、401/404/409/400、ページネーション、ユーザー間分離、31テスト）
+  - [x] @dev T-541 — PUT /stocks/:id/memo 実装（メモupsert、stock所有権チェック）
+  - [x] @dev T-542 — GET /stocks/:id/memo 実装（メモ取得、404対応）
+  - [x] @qa T-543 — Memo APIユニットテスト（作成・更新・取得、存在しないstock、所有権分離、19テスト）
 
-<!-- === Phase 4: フロントエンド ===
+
+=== Phase 4: フロントエンド ===
   - [ ] @dev T-504 — フロントエンドGoogle Sign-In統合（Google Identity Services SDK導入、login.astroにログインフロー実装）[dep: T-501]
   - [ ] @dev T-551 — ベースレイアウト実装（src/layouts/BaseLayout.astro: 共通head、ナビバー、ログアウトボタン、基本CSS）[dep: T-550]
   - [ ] @dev T-552 — ストック一覧画面構築（URL入力フォーム＋ストックカード一覧＋ローディング/空状態ハンドリング）[dep: T-532, T-551]
@@ -126,15 +107,15 @@
   - [ ] @dev T-556 — ログインページ更新（Google Sign-In統合、認証後/stocksへリダイレクト、レイアウト統一）[dep: T-504, T-551]
   - [ ] @dev T-557 — トップページ更新（認証済み→/stocksリダイレクト、未認証→ログイン案内）[dep: T-551, T-502]
   - [ ] @qa T-558 — フロントエンドE2Eテスト（ログインリダイレクト、一覧表示、URL登録、詳細表示、メモ編集、削除）[dep: T-552〜T-554]
--->
 
-<!-- === Phase 5: 統合 & リリース ===
+
+=== Phase 5: 統合 & リリース ===
   - [ ] @dev T-503 — ログアウトエンドポイント実装（POST /api/auth/logout）[dep: T-502]
   - [ ] @pm T-571 — 本番デプロイチェックリスト策定（Google Cloud OIDC設定、Secrets投入、D1本番DB、Queue作成、DNS/ルーティング）[dep: T-500, T-522]
   - [ ] @dev T-572 — 本番構成設定（/api/*ルーティング、wrangler.tomlに本番D1 ID・Queue名設定）[dep: T-571]
   - [ ] @qa T-573 — 統合テスト（URL登録→Queue処理→メタデータ取得→一覧表示の全フロー検証）[dep: T-531, T-523, T-532]
   - [ ] @qa T-575 — MVP受入テスト（CLAUDE.md セクション8の成功基準5項目を本番環境で検証）[dep: 全タスク]
--->
+
 
 ---
 
@@ -146,7 +127,42 @@
 
 ---
 
-## 7. Done（前スプリント: インフラ・基盤整備）
+## 7. Done
+
+### Phase 3: APIエンドポイント
+- [x] @qa T-508 — 認証ミドルウェアのユニットテスト作成（11テスト）
+- [x] @dev T-502 — 本番用認証ミドルウェア実装（HMAC-SHA256署名Cookie検証→AuthContext注入）
+- [x] @dev T-523 — Queueコンシューマー実装（メッセージ受信→oEmbed取得→D1のstock更新）
+- [x] @dev T-531 — POST /stocks 実装（URL検証→プロバイダ検出→重複チェック→stock挿入→Queue送信→201返却）
+- [x] @dev T-532 — GET /stocks 実装（一覧取得、created_at降順、メモ結合、カーソルページネーション）
+- [x] @dev T-533 — GET /stocks/:id 実装（詳細取得、メモ付き、所有権チェック）
+- [x] @dev T-534 — DELETE /stocks/:id 実装（ストック＋関連メモ削除、所有権チェック、204返却）
+- [x] @dev T-541 — PUT /stocks/:id/memo 実装（メモupsert、stock所有権チェック）
+- [x] @dev T-542 — GET /stocks/:id/memo 実装（メモ取得、stock不存在/メモ未作成の区別）
+- [x] @qa T-524 — oEmbed/Queueユニットテスト作成（8テスト）
+- [x] @qa T-536 — Stock APIユニットテスト作成（31テスト）
+- [x] @qa T-543 — Memo APIユニットテスト作成（19テスト）
+
+### Phase 2: コアバックエンド
+- [x] @qa T-507 — OIDCログインエンドポイントのユニットテスト作成（21テスト）
+- [x] @qa T-512 — プロバイダ検出ユニットテスト作成（35テスト）
+- [x] @dev T-501 — Google OIDCログインエンドポイント実装（handleLogin / handleCallback）
+- [x] @dev T-511 — プロバイダ検出モジュール実装（detectProvider）
+- [x] @dev T-521 — oEmbedフェッチサービス実装（SpeakerDeck/Docswell/Google Slides）
+- [x] @dev T-522 — Cloudflare Queues設定（wrangler.toml producer/consumer追加）
+
+### Phase 1: 仕様策定 & 基盤整備
+- [x] @pm T-500 — Google OIDC認証仕様策定 → docs/auth-spec.md
+- [x] @pm T-510 — プロバイダ検出仕様策定 → docs/provider-spec.md
+- [x] @pm T-520 — oEmbed/Queue処理仕様策定 → docs/oembed-spec.md
+- [x] @pm T-530 — Stock API仕様策定 → docs/stock-api-spec.md
+- [x] @pm T-540 — Memo API仕様策定 → docs/memo-api-spec.md
+- [x] @pm T-550 — フロントエンドUI仕様策定 → docs/ui-spec.md
+- [x] @dev T-535 — worker/index.ts ルーティングリファクタ
+- [x] @dev T-570 — APIエラーハンドリング統一 & CORS設定
+- [x] @dev T-506 — 環境変数・Secrets設定
+
+### 前スプリント: インフラ・基盤整備
 - [x] @pm T-100 — CI/CD方針とDoDを plan.md に明文化
 - [x] @qa T-110 — 現状テスト棚卸しとCI実行コマンド定義
 - [x] @dev T-120 — PR(main)でCI実行するGitHub Actions workflow追加

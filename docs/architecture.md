@@ -73,23 +73,28 @@ sequenceDiagram
     C->>D1: UPDATE stock (status=ready)
 ```
 
-### 認証フロー
+### 認証フロー（Authorization Code Flow）
 
 ```mermaid
 sequenceDiagram
     actor User as ユーザー
-    participant FE as フロントエンド
+    participant FE as フロントエンド<br/>(Astro)
+    participant API as REST API<br/>(Workers)
     participant Google as Google OIDC
-    participant API as REST API
 
-    User->>FE: Google Loginボタン押下
-    FE->>Google: 認証リクエスト
-    Google-->>FE: ID Token (JWT)
-    FE->>API: GET /me (Bearer Token)
-    API->>API: JWT検証 (sub, email, name取得)
-    API->>API: セッション発行
-    API-->>FE: ユーザー情報
+    User->>FE: 「Google でログイン」ボタン押下
+    FE->>API: GET /api/auth/login
+    API-->>User: 302 Redirect to Google Authorization Endpoint
+    User->>Google: 認証情報入力・同意
+    Google-->>API: GET /api/auth/callback?code=xxx&state=yyy
+    API->>Google: POST token endpoint（code → token 交換）
+    Google-->>API: { id_token, access_token }
+    API->>API: ID Token 検証（jose）→ユーザー upsert
+    API->>API: セッション Cookie 生成（HMAC-SHA256 署名）
+    API-->>User: 302 Redirect to /（Set-Cookie: session）
 ```
+
+> 詳細は [docs/auth-spec.md](auth-spec.md) を参照。
 
 ---
 
@@ -114,7 +119,8 @@ sequenceDiagram
 |------|------|
 | ランタイム | Cloudflare Workers |
 | 設計 | REST API / JSONベース通信 |
-| 認証 | Bearer トークン前提 (Cookie併用可) |
+| 認証 | セッション Cookie（HMAC-SHA256 署名） |
+| オリジン | Pages と Workers は同一オリジン（`/api/*` を Workers にルーティング） |
 
 設計原則:
 - フロントからはHTTPのみ利用

@@ -6,3 +6,15 @@ compatibility_date = "2025-02-14"
 binding = "DB"
 database_name = "slide-stock-db"
 database_id = "placeholder-replace-with-actual-id"
+
+# oEmbed メタデータ取得用 Queue（oembed-spec.md セクション 5.4）
+[[queues.producers]]
+queue = "oembed-fetch"
+binding = "OEMBED_QUEUE"
+
+[[queues.consumers]]
+queue = "oembed-fetch"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 3
+dead_letter_queue = "oembed-fetch-dlq"
