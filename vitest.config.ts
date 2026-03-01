@@ -21,6 +21,7 @@ export default defineWorkersConfig(async () => {
             d1Databases: ["DB"],
             bindings: {
               TEST_MIGRATIONS: migrations,
+              TEST_MODE: "true",
             },
           },
         },
