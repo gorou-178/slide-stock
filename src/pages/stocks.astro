@@ -139,7 +139,18 @@ import StockList from '../components/StockList.astro';
 
       nextCursor = data.next_cursor;
       loadMoreContainer.hidden = !data.has_more;
-    } catch {
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'status' in err) {
+        const apiErr = err as { status: number };
+        if (apiErr.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
+        if (apiErr.status >= 500) {
+          window.location.href = '/error?code=500';
+          return;
+        }
+      }
       stockLoading.hidden = true;
       stockEmpty.hidden = false;
       stockEmpty.querySelector('p')!.textContent = 'ストックの読み込みに失敗しました。';

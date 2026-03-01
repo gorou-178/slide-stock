@@ -11,5 +11,20 @@ export default defineConfig({
         '/api': 'http://localhost:8787',
       },
     },
+    plugins: [
+      {
+        // dev server で _redirects 相当のリライトを再現
+        // 本番は Cloudflare Pages の _redirects が処理する
+        name: 'stock-detail-rewrite',
+        configureServer(server) {
+          server.middlewares.use((req, _res, next) => {
+            if (req.url && /^\/stocks\/[^/]+/.test(req.url)) {
+              req.url = '/stock-detail';
+            }
+            next();
+          });
+        },
+      },
+    ],
   },
 });

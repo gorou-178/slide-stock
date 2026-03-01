@@ -24,10 +24,10 @@ import {
 
 /** テスト用のデフォルトユーザー情報 */
 const TEST_USER = {
-  id: "test-user-001",
+  id: "test-user-1",
   googleSub: "google-sub-test-001",
-  email: "test@example.com",
-  name: "Test User",
+  email: "user1@example.com",
+  name: "Test User 1",
 } as const;
 
 /** テスト用の別ユーザー情報 */

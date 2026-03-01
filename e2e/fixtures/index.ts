@@ -13,9 +13,9 @@ export interface TestUser {
  * デフォルトのテストユーザー
  */
 export const DEFAULT_TEST_USER: TestUser = {
-  id: "test-user-001",
-  email: "test@example.com",
-  name: "Test User",
+  id: "test-user-1",
+  email: "user1@example.com",
+  name: "Test User 1",
 };
 
 /**

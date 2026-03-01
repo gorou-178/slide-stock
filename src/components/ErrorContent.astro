@@ -1,0 +1,31 @@
+---
+interface Props {
+  code?: number;
+}
+
+const { code = 404 } = Astro.props;
+
+const errors: Record<number, { title: string; description: string }> = {
+  403: {
+    title: 'アクセス権限がありません',
+    description: 'このページを表示する権限がありません。',
+  },
+  404: {
+    title: 'ページが見つかりません',
+    description: 'お探しのページは存在しないか、移動した可能性があります。',
+  },
+  500: {
+    title: 'サーバーエラー',
+    description: 'サーバーで問題が発生しました。しばらくしてからもう一度お試しください。',
+  },
+};
+
+const error = errors[code] || errors[404];
+---
+
+<div class="error-page">
+  <p id="error-code" class="error-page-code">{code}</p>
+  <h1 id="error-title">{error.title}</h1>
+  <p id="error-description">{error.description}</p>
+  <a href="/" class="btn-primary">トップページに戻る</a>
+</div>

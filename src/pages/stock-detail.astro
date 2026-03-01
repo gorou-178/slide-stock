@@ -169,8 +169,16 @@ import MemoEditor from '../components/MemoEditor.astro';
           window.location.href = '/login';
           return;
         }
+        if (err.status === 403) {
+          window.location.href = '/error?code=403';
+          return;
+        }
         if (err.status === 404) {
           showError('ストックが見つかりません');
+          return;
+        }
+        if (err.status >= 500) {
+          window.location.href = '/error?code=500';
           return;
         }
         showError(err.message);

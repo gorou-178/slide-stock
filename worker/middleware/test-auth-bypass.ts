@@ -17,11 +17,11 @@ export interface AuthContext {
   name: string;
 }
 
-/** デフォルトのテストユーザー */
+/** デフォルトのテストユーザー（seed.ts の TEST_USERS[0] と一致させる） */
 export const DEFAULT_TEST_USER = {
-  id: "test-user-001",
-  email: "test@example.com",
-  name: "Test User",
+  id: "test-user-1",
+  email: "user1@example.com",
+  name: "Test User 1",
 } as const;
 
 /**

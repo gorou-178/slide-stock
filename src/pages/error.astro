@@ -1,0 +1,34 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import ErrorContent from '../components/ErrorContent.astro';
+---
+
+<BaseLayout title="エラー" showNavbar={false}>
+  <ErrorContent code={500} />
+</BaseLayout>
+
+<script>
+  const ERRORS: Record<number, { title: string; description: string }> = {
+    403: {
+      title: 'アクセス権限がありません',
+      description: 'このページを表示する権限がありません。',
+    },
+    500: {
+      title: 'サーバーエラー',
+      description: 'サーバーで問題が発生しました。しばらくしてからもう一度お試しください。',
+    },
+  };
+
+  const params = new URLSearchParams(window.location.search);
+  const code = Number(params.get('code'));
+
+  if (code && ERRORS[code]) {
+    const error = ERRORS[code];
+    const codeEl = document.getElementById('error-code');
+    const titleEl = document.getElementById('error-title');
+    const descEl = document.getElementById('error-description');
+    if (codeEl) codeEl.textContent = String(code);
+    if (titleEl) titleEl.textContent = error.title;
+    if (descEl) descEl.textContent = error.description;
+  }
+</script>

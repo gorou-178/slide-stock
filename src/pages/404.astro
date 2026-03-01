@@ -1,0 +1,8 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import ErrorContent from '../components/ErrorContent.astro';
+---
+
+<BaseLayout title="ページが見つかりません" showNavbar={false}>
+  <ErrorContent code={404} />
+</BaseLayout>
