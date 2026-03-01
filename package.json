@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "db:seed": "npx tsx scripts/seed-local.ts > /tmp/slide-stock-seed.sql && wrangler d1 execute slide-stock-db --local --file=/tmp/slide-stock-seed.sql"
+    "db:seed": "npx tsx scripts/seed-local.ts > /tmp/slide-stock-seed.sql && wrangler d1 execute slide-stock-db --local --file=/tmp/slide-stock-seed.sql",
+    "db:reset": "wrangler d1 execute slide-stock-db --local --command='DELETE FROM memos; DELETE FROM stocks; DELETE FROM users;'"
   },
   "dependencies": {
     "astro": "^5.17.1",
