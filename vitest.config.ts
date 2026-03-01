@@ -23,6 +23,7 @@ export default defineWorkersConfig(async () => {
               TEST_MIGRATIONS: migrations,
               TEST_MODE: "true",
             },
+            queueConsumers: {},
           },
         },
       },
