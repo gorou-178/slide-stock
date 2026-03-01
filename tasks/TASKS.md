@@ -118,12 +118,12 @@
 
 
 === Phase 6A: セキュリティ強化 ===
-  - [ ] @dev T-601 — TEST_MODE 本番誤設定防止ガード（CALLBACK_URL が本番ドメインの場合 TEST_MODE を強制無効化 + 警告ログ出力）
-  - [ ] @dev T-602 — Docswell oEmbed embed_url ドメインバリデーション追加（docswell.com ドメインのみ許可、不正URLは embed_url=null で保存）
-  - [ ] @dev T-603 — auth_state Cookie に Secure フラグ追加（session Cookie と同じ isSecure 判定ロジックを適用）
-  - [ ] @dev T-604 — セキュリティレスポンスヘッダー追加（public/_headers: X-Frame-Options: DENY, X-Content-Type-Options: nosniff, 基本CSP, HSTS）
-  - [ ] @dev T-605 — Worker メイン fetch ハンドラーにグローバル try/catch 追加（未捕捉エラー→500 JSON + console.error）
-  - [ ] @dev T-606 — stocks テーブルに UNIQUE INDEX (user_id, canonical_url) 追加（マイグレーション + 409 制約違反ハンドリング）
+  - [x] @dev T-601 — TEST_MODE 本番誤設定防止ガード（CALLBACK_URL が本番ドメインの場合 TEST_MODE を強制無効化 + 警告ログ出力）
+  - [x] @dev T-602 — Docswell oEmbed embed_url ドメインバリデーション追加（docswell.com ドメインのみ許可、不正URLは embed_url=null で保存）
+  - [x] @dev T-603 — auth_state Cookie に Secure フラグ追加（session Cookie と同じ isSecure 判定ロジックを適用）
+  - [x] @dev T-604 — セキュリティレスポンスヘッダー追加（public/_headers: X-Frame-Options: DENY, X-Content-Type-Options: nosniff, 基本CSP, HSTS）
+  - [x] @dev T-605 — Worker メイン fetch ハンドラーにグローバル try/catch 追加（未捕捉エラー→500 JSON + console.error）
+  - [x] @dev T-606 — stocks テーブルに UNIQUE INDEX (user_id, canonical_url) 追加（マイグレーション + 409 制約違反ハンドリング）
   - [ ] @qa T-607 — セキュリティ修正検証テスト（T-601〜T-606 の各修正が意図通り動作することを確認）[dep: T-601, T-602, T-603, T-604, T-605, T-606]
 
 
@@ -132,7 +132,7 @@
 
 
 === Phase 6C: 可観測性 ===
-  - [ ] @dev T-620 — Worker ハンドラーに構造化ログ追加（認証成功/失敗、Stock CRUD操作、Queue処理結果、エラー詳細を console.log/error で出力。wrangler tail + Workers Trace Events で無料監視可能にする）
+  - [x] @dev T-620 — Worker ハンドラーに構造化ログ追加（認証成功/失敗、Stock CRUD操作、Queue処理結果、エラー詳細を console.log/error で出力。wrangler tail + Workers Trace Events で無料監視可能にする）
   - [ ] @pm T-621 — 可観測性運用ガイド作成（ops/ に配置、.gitignore 対象。内容: Cloudflare ダッシュボード活用方法、wrangler tail 手順、DLQ監視、Workers Analytics/D1 Metrics/Queue Metrics の確認ポイント）
 
 

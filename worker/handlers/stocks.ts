@@ -123,12 +123,26 @@ export async function handleCreateStock(
   const stockId = crypto.randomUUID();
   const now = new Date().toISOString();
 
-  await env.DB.prepare(
-    `INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
-  )
-    .bind(stockId, auth.userId, url, canonicalUrl, provider, now, now)
-    .run();
+  try {
+    await env.DB.prepare(
+      `INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+    )
+      .bind(stockId, auth.userId, url, canonicalUrl, provider, now, now)
+      .run();
+  } catch (e: unknown) {
+    // UNIQUE 制約違反（race condition で重複した場合）
+    if (e instanceof Error && e.message.includes("UNIQUE constraint failed")) {
+      return jsonError(
+        "このスライドは既にストック済みです",
+        "DUPLICATE_STOCK",
+        409,
+      );
+    }
+    throw e;
+  }
+
+  console.log(JSON.stringify({ action: "stock_created", stockId, provider, userId: auth.userId }));
 
   // 6. Queue メッセージ送信
   await env.OEMBED_QUEUE.send({
@@ -312,6 +326,8 @@ export async function handleDeleteStock(
   )
     .bind(stockId, auth.userId)
     .run();
+
+  console.log(JSON.stringify({ action: "stock_deleted", stockId, userId: auth.userId }));
 
   // 4. 204 No Content
   return new Response(null, { status: 204 });

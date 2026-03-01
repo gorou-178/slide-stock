@@ -60,6 +60,15 @@ export async function testAuthBypass(
     return null;
   }
 
+  // 本番誤設定防止: CALLBACK_URL が https:// の場合は TEST_MODE を無効化
+  const callbackUrl = env.CALLBACK_URL;
+  if (typeof callbackUrl === "string" && callbackUrl.startsWith("https://")) {
+    console.error(
+      "SECURITY: TEST_MODE=true is set with a production CALLBACK_URL. Test auth bypass is disabled.",
+    );
+    return null;
+  }
+
   // 1. X-Test-User-Id ヘッダーを優先
   const headerUserId = request.headers.get("X-Test-User-Id");
   if (headerUserId) {

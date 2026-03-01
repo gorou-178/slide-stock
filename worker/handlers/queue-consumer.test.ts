@@ -24,6 +24,7 @@ async function insertPendingStock(
   stockId: string,
   userId: string = "test-user-1",
 ): Promise<void> {
+  const uniqueUrl = `https://speakerdeck.com/user/${stockId}`;
   await env.DB.prepare(
     `INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, 'speakerdeck', 'pending', ?, ?)`,
@@ -31,8 +32,8 @@ async function insertPendingStock(
     .bind(
       stockId,
       userId,
-      "https://speakerdeck.com/user/slide",
-      "https://speakerdeck.com/user/slide",
+      uniqueUrl,
+      uniqueUrl,
       new Date().toISOString(),
       new Date().toISOString(),
     )

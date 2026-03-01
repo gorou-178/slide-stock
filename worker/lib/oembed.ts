@@ -126,9 +126,29 @@ export async function fetchDocswellMetadata(
     url?: string;
   };
 
-  const embedUrl = data.url ?? null;
-  if (!embedUrl) {
+  const rawEmbedUrl = data.url ?? null;
+  if (!rawEmbedUrl) {
     throw new PermanentError("Docswell oEmbed response missing url field");
+  }
+
+  // embed URL のドメインバリデーション
+  let embedUrl: string | null = rawEmbedUrl;
+  try {
+    const parsed = new URL(rawEmbedUrl);
+    if (
+      parsed.protocol !== "https:" ||
+      !parsed.hostname.endsWith("docswell.com")
+    ) {
+      embedUrl = null;
+    }
+  } catch {
+    embedUrl = null;
+  }
+
+  if (!embedUrl) {
+    throw new PermanentError(
+      `Docswell oEmbed returned untrusted embed URL: ${rawEmbedUrl}`,
+    );
   }
 
   return {

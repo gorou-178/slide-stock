@@ -84,18 +84,25 @@ export async function handleQueue(
 
     try {
       await processMessage(msg, env);
+      console.log(JSON.stringify({ action: "oembed_success", stockId: msg.stockId, provider: msg.provider }));
       message.ack();
     } catch (error) {
       if (error instanceof PermanentError) {
-        console.error(
-          `Permanent error for stock ${msg.stockId}: ${error.message}`,
-        );
+        console.error(JSON.stringify({
+          action: "oembed_permanent_error",
+          stockId: msg.stockId,
+          provider: msg.provider,
+          error: error.message,
+        }));
         await markStockFailed(env.DB, msg.stockId);
         message.ack();
       } else {
-        console.error(
-          `Transient error for stock ${msg.stockId}: ${error}`,
-        );
+        console.error(JSON.stringify({
+          action: "oembed_transient_error",
+          stockId: msg.stockId,
+          provider: msg.provider,
+          error: String(error),
+        }));
         message.retry();
       }
     }

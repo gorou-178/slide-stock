@@ -104,11 +104,14 @@ export async function handleLogin(
   authUrl.searchParams.set("state", state);
   authUrl.searchParams.set("prompt", "consent");
 
+  const isSecure = env.CALLBACK_URL.startsWith("https://");
+  const securePart = isSecure ? " Secure;" : "";
+
   const headers = new Headers();
   headers.set("Location", authUrl.toString());
   headers.append(
     "Set-Cookie",
-    `auth_state=${state}; HttpOnly; SameSite=Lax; Max-Age=300; Path=/api`,
+    `auth_state=${state}; HttpOnly;${securePart} SameSite=Lax; Max-Age=300; Path=/api`,
   );
 
   return new Response(null, { status: 302, headers });
@@ -193,6 +196,8 @@ export async function handleCallback(
       .bind(userId, claims.sub, claims.email, claims.name, new Date().toISOString())
       .run();
   }
+
+  console.log(JSON.stringify({ action: "auth_callback_success", userId }));
 
   // 6. セッション Cookie 発行
   const sessionValue = await createSessionCookie(userId, env.SESSION_SECRET);
