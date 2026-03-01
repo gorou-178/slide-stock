@@ -1,17 +1,38 @@
 ---
+import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
-<html lang="ja">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<meta name="viewport" content="width=device-width" />
-		<title>ログイン - Slide Stock</title>
-	</head>
-	<body>
-		<main>
-			<h1>ログイン</h1>
-			<button type="button">Google でログイン</button>
-		</main>
-	</body>
-</html>
+<BaseLayout title="ログイン" showNavbar={false}>
+  <div class="login-container" id="login-container" hidden>
+    <h1>Slide Stock</h1>
+    <p>Google アカウントでログインしてください</p>
+    <a href="/api/auth/login" class="btn-google-login">
+      Google でログイン
+    </a>
+  </div>
+
+  <div class="login-container" id="login-loading">
+    <div class="loading-spinner" role="status" aria-label="読み込み中">
+      <span class="sr-only">読み込み中...</span>
+    </div>
+  </div>
+</BaseLayout>
+
+<script>
+  // 認証済みなら /stocks にリダイレクト
+  fetch('/api/me')
+    .then((res) => {
+      if (res.ok) {
+        window.location.href = '/stocks';
+      } else {
+        // 未認証: ログインボタンを表示
+        document.getElementById('login-loading')!.hidden = true;
+        document.getElementById('login-container')!.hidden = false;
+      }
+    })
+    .catch(() => {
+      // ネットワークエラー時もログインボタンを表示
+      document.getElementById('login-loading')!.hidden = true;
+      document.getElementById('login-container')!.hidden = false;
+    });
+</script>

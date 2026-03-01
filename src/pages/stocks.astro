@@ -1,43 +1,208 @@
 ---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import URLInputForm from '../components/URLInputForm.astro';
+import StockList from '../components/StockList.astro';
 ---
 
-<html lang="ja">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<meta name="viewport" content="width=device-width" />
-		<title>ストック一覧 - Slide Stock</title>
-	</head>
-	<body>
-		<nav aria-label="メインナビゲーション">
-			<a href="/">Slide Stock</a>
-			<span id="user-name"></span>
-		</nav>
-		<main>
-			<h1>ストック一覧</h1>
-		</main>
-		<script>
-			const cookie = document.cookie
-				.split("; ")
-				.find((c) => c.startsWith("test_session="));
-			if (!cookie) {
-				window.location.replace("/login");
-			} else {
-				fetch("/api/me")
-					.then((res) => {
-						if (!res.ok) throw new Error("Unauthorized");
-						return res.json();
-					})
-					.then((user: { name?: string }) => {
-						const el = document.getElementById("user-name");
-						if (el && user.name) {
-							el.textContent = user.name;
-						}
-					})
-					.catch(() => {
-						window.location.replace("/login");
-					});
-			}
-		</script>
-	</body>
-</html>
+<BaseLayout title="ストック一覧">
+  <URLInputForm />
+  <StockList />
+</BaseLayout>
+
+<script>
+  import { fetchMe, fetchStocks, createStock, type StockItem } from '../lib/api-client';
+
+  const PROVIDER_LABELS: Record<string, string> = {
+    speakerdeck: 'SpeakerDeck',
+    docswell: 'Docswell',
+    google_slides: 'Google Slides',
+  };
+
+  function truncate(text: string, max: number): string {
+    if (text.length <= max) return text;
+    return text.slice(0, max) + '…';
+  }
+
+  function createStockCard(stock: StockItem): HTMLElement {
+    const article = document.createElement('article');
+    article.className = 'stock-card';
+    article.dataset.stockId = stock.id;
+
+    const header = document.createElement('div');
+    header.className = 'stock-card-header';
+
+    const titleEl = document.createElement('h2');
+    titleEl.className = 'stock-card-title';
+
+    if (stock.status === 'pending') {
+      const span = document.createElement('span');
+      span.className = 'stock-card-pending';
+      span.textContent = 'メタデータ取得中...';
+      titleEl.appendChild(span);
+    } else if (stock.status === 'failed') {
+      const span = document.createElement('span');
+      span.className = 'stock-card-failed';
+      span.textContent = 'メタデータの取得に失敗しました';
+      titleEl.appendChild(span);
+    } else {
+      const link = document.createElement('a');
+      link.href = `/stocks/${stock.id}`;
+      link.textContent = stock.title || 'タイトルなし';
+      titleEl.appendChild(link);
+    }
+
+    const badge = document.createElement('span');
+    badge.className = `badge badge-${stock.provider}`;
+    badge.textContent = PROVIDER_LABELS[stock.provider] || stock.provider;
+
+    header.appendChild(titleEl);
+    header.appendChild(badge);
+    article.appendChild(header);
+
+    if (stock.author_name) {
+      const meta = document.createElement('div');
+      meta.className = 'stock-card-meta';
+      meta.textContent = stock.author_name;
+      article.appendChild(meta);
+    }
+
+    if (stock.memo_text) {
+      const memo = document.createElement('p');
+      memo.className = 'stock-card-memo';
+      memo.textContent = truncate(stock.memo_text, 100);
+      article.appendChild(memo);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'stock-card-actions';
+
+    const detailLink = document.createElement('a');
+    detailLink.href = `/stocks/${stock.id}`;
+    detailLink.className = 'btn-text';
+    detailLink.textContent = '詳細を見る';
+    actions.appendChild(detailLink);
+
+    const extLink = document.createElement('a');
+    extLink.href = stock.original_url;
+    extLink.target = '_blank';
+    extLink.rel = 'noopener noreferrer';
+    extLink.className = 'btn-text';
+    extLink.innerHTML = '元のスライドを開く <span aria-hidden="true">↗</span>';
+    actions.appendChild(extLink);
+
+    article.appendChild(actions);
+
+    return article;
+  }
+
+  // --- 初期化 ---
+
+  let nextCursor: string | null = null;
+
+  const stockLoading = document.getElementById('stock-loading')!;
+  const stockEmpty = document.getElementById('stock-empty')!;
+  const stockList = document.getElementById('stock-list')!;
+  const loadMoreContainer = document.getElementById('load-more-container')!;
+  const loadMoreBtn = document.getElementById('load-more-btn')!;
+  const form = document.getElementById('url-input-form') as HTMLFormElement;
+  const urlInput = document.getElementById('slide-url') as HTMLInputElement;
+  const submitBtn = document.getElementById('submit-btn') as HTMLButtonElement;
+  const urlError = document.getElementById('url-error')!;
+
+  // 認証チェック
+  async function init() {
+    const user = await fetchMe().catch(() => null);
+    if (!user) {
+      window.location.href = '/login';
+      return;
+    }
+
+    // Navbar のユーザー名は Navbar.astro の script で設定済み
+
+    // ストック一覧の初回読み込み
+    await loadStocks();
+  }
+
+  async function loadStocks() {
+    try {
+      const data = await fetchStocks(nextCursor ?? undefined);
+      stockLoading.hidden = true;
+
+      if (data.items.length === 0 && !nextCursor) {
+        stockEmpty.hidden = false;
+      } else {
+        stockEmpty.hidden = true;
+        for (const stock of data.items) {
+          stockList.appendChild(createStockCard(stock));
+        }
+      }
+
+      nextCursor = data.next_cursor;
+      loadMoreContainer.hidden = !data.has_more;
+    } catch {
+      stockLoading.hidden = true;
+      stockEmpty.hidden = false;
+      stockEmpty.querySelector('p')!.textContent = 'ストックの読み込みに失敗しました。';
+    }
+  }
+
+  // もっと読み込む
+  loadMoreBtn.addEventListener('click', async () => {
+    loadMoreBtn.disabled = true;
+    loadMoreBtn.textContent = '読み込み中...';
+    await loadStocks();
+    loadMoreBtn.disabled = false;
+    loadMoreBtn.textContent = 'もっと読み込む';
+  });
+
+  // URL 送信
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = urlInput.value.trim();
+    if (!url) return;
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = '追加中...';
+    urlError.hidden = true;
+
+    try {
+      const stock = await createStock(url);
+      // 空状態を非表示に
+      stockEmpty.hidden = true;
+      // カードを一覧の先頭に追加（ローディングの後）
+      const firstCard = stockList.querySelector('.stock-card');
+      if (firstCard) {
+        stockList.insertBefore(createStockCard(stock), firstCard);
+      } else {
+        stockList.appendChild(createStockCard(stock));
+      }
+      urlInput.value = '';
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'status' in err) {
+        const apiErr = err as { status: number; message: string };
+        if (apiErr.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
+        if (apiErr.status === 409) {
+          urlError.textContent = 'このスライドは既にストック済みです';
+        } else {
+          urlError.textContent = apiErr.message || 'エラーが発生しました';
+        }
+      } else {
+        urlError.textContent = 'サーバーに接続できません。ネットワーク接続を確認してください。';
+      }
+      urlError.hidden = false;
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '追加';
+    }
+  });
+
+  // 入力中にエラーを消す
+  urlInput.addEventListener('input', () => {
+    urlError.hidden = true;
+  });
+
+  init();
+</script>

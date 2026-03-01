@@ -1,6 +1,6 @@
 import { testAuthBypass, type AuthContext } from './middleware/test-auth-bypass';
 import { sessionAuth } from './middleware/session-auth';
-import { handleLogin, handleCallback } from './handlers/auth';
+import { handleLogin, handleCallback, handleLogout } from './handlers/auth';
 import {
   handleCreateStock,
   handleListStocks,
@@ -58,17 +58,23 @@ export default {
     if (pathname === '/api/auth/callback' && method === 'GET') {
       return handleCallback(request, env);
     }
+    if (pathname === '/api/auth/logout' && method === 'POST') {
+      return handleLogout(request, env);
+    }
 
     // --- 認証必須エンドポイント ---
     const authContext = await resolveAuth(request, env);
 
     if (pathname === '/api/me') {
       if (!authContext) return unauthorized();
-      return Response.json({
-        id: authContext.userId,
-        email: authContext.email,
-        name: authContext.name,
-      });
+      // D1 から実際のユーザー情報を取得（session-auth は uid のみ保持）
+      const user = await env.DB.prepare(
+        'SELECT id, email, name FROM users WHERE id = ?',
+      )
+        .bind(authContext.userId)
+        .first<{ id: string; email: string; name: string }>();
+      if (!user) return unauthorized();
+      return Response.json(user);
     }
 
     // Stock API

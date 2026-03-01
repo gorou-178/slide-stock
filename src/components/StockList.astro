@@ -1,0 +1,18 @@
+<section id="stock-list" class="stock-list" aria-label="ストック一覧">
+  <div id="stock-loading" class="loading-container">
+    <div class="loading-spinner" role="status" aria-label="読み込み中">
+      <span class="sr-only">読み込み中...</span>
+    </div>
+  </div>
+
+  <div id="stock-empty" class="empty-state" hidden>
+    <p>まだスライドがストックされていません。</p>
+    <p>上のフォームからスライドのURLを追加してみましょう。</p>
+  </div>
+</section>
+
+<div id="load-more-container" hidden>
+  <button id="load-more-btn" type="button" class="btn-secondary">
+    もっと読み込む
+  </button>
+</div>

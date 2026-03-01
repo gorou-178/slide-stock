@@ -1,0 +1,18 @@
+<form id="url-input-form" class="url-input-form" role="form" aria-label="スライドURL登録">
+  <div class="input-group">
+    <label for="slide-url" class="sr-only">スライドURL</label>
+    <input
+      id="slide-url"
+      type="url"
+      name="url"
+      placeholder="スライドのURLを入力（SpeakerDeck / Docswell / Google Slides）"
+      required
+      autocomplete="url"
+      class="input-url"
+    />
+    <button type="submit" class="btn-primary" id="submit-btn">
+      追加
+    </button>
+  </div>
+  <div id="url-error" class="error-message" role="alert" aria-live="polite" hidden></div>
+</form>

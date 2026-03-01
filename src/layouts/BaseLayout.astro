@@ -1,0 +1,30 @@
+---
+import Navbar from '../components/Navbar.astro';
+
+interface Props {
+  title: string;
+  showNavbar?: boolean;
+}
+
+const { title, showNavbar = true } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title} - Slide Stock</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/styles/global.css" />
+</head>
+<body>
+  {showNavbar && <Navbar />}
+  <main>
+    <slot />
+  </main>
+  <footer>
+    <p>&copy; 2025 Slide Stock</p>
+  </footer>
+</body>
+</html>

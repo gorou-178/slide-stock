@@ -213,3 +213,24 @@ export async function handleCallback(
 
   return new Response(null, { status: 302, headers });
 }
+
+/**
+ * POST /api/auth/logout
+ * セッション Cookie を削除する
+ */
+export async function handleLogout(
+  _request: Request,
+  env: AuthEnv,
+): Promise<Response> {
+  const isSecure = env.CALLBACK_URL.startsWith("https://");
+  const securePart = isSecure ? " Secure;" : "";
+
+  return Response.json(
+    { ok: true },
+    {
+      headers: {
+        "Set-Cookie": `session=; HttpOnly;${securePart} SameSite=Lax; Path=/api; Max-Age=0`,
+      },
+    },
+  );
+}

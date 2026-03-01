@@ -40,8 +40,25 @@
       "Bash(git push*)",
       "Bash(git reset --hard*)",
       "Bash(git clean*)",
+      "Bash(git config *)",
+      "Bash(brew install *)",
+      "Bash(chmod 777 *)",
       "Bash(rm -rf /*)",
-      "Bash(rm -rf ~*)"
+      "Bash(rm -rf ~*)",
+      "Bash(gh repo delete:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/projects/slide-stock/.claude/scripts/deny-check.sh"
+          }
+        ]
+      }
     ]
   }
 }

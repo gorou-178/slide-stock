@@ -98,19 +98,19 @@
 
 
 === Phase 4: フロントエンド ===
-  - [ ] @dev T-504 — フロントエンドGoogle Sign-In統合（Google Identity Services SDK導入、login.astroにログインフロー実装）[dep: T-501]
-  - [ ] @dev T-551 — ベースレイアウト実装（src/layouts/BaseLayout.astro: 共通head、ナビバー、ログアウトボタン、基本CSS）[dep: T-550]
-  - [ ] @dev T-552 — ストック一覧画面構築（URL入力フォーム＋ストックカード一覧＋ローディング/空状態ハンドリング）[dep: T-532, T-551]
-  - [ ] @dev T-553 — URL送信フロー実装（フォームsubmit→POST /stocks→pending表示→一覧更新）[dep: T-531, T-552]
-  - [ ] @dev T-554 — ストック詳細画面構築（embed表示＋メモ編集テキストエリア＋保存/削除ボタン＋元URLリンク）[dep: T-533, T-541, T-534, T-551]
-  - [ ] @dev T-555 — oEmbed埋め込みコンポーネント実装（embed_urlからiframe生成、プロバイダ別サイズ対応、lazy loading）[dep: T-550]
-  - [ ] @dev T-556 — ログインページ更新（Google Sign-In統合、認証後/stocksへリダイレクト、レイアウト統一）[dep: T-504, T-551]
-  - [ ] @dev T-557 — トップページ更新（認証済み→/stocksリダイレクト、未認証→ログイン案内）[dep: T-551, T-502]
-  - [ ] @qa T-558 — フロントエンドE2Eテスト（ログインリダイレクト、一覧表示、URL登録、詳細表示、メモ編集、削除）[dep: T-552〜T-554]
+  - [x] @dev T-504 — フロントエンドGoogle Sign-In統合（T-556に統合: <a href="/api/auth/login">方式）
+  - [x] @dev T-551 — ベースレイアウト実装（BaseLayout.astro + Navbar.astro + global.css + LoadingSpinner + EmptyState）
+  - [x] @dev T-552 — ストック一覧画面構築（URL入力フォーム＋ストックカード一覧＋ローディング/空状態ハンドリング）
+  - [x] @dev T-553 — URL送信フロー実装（フォームsubmit→POST /stocks→pending表示→一覧更新 + api-client.ts）
+  - [x] @dev T-554 — ストック詳細画面構築（embed表示＋メモ編集テキストエリア＋保存/削除ボタン＋元URLリンク）
+  - [x] @dev T-555 — oEmbed埋め込みコンポーネント実装（embed_urlからiframe生成、16:9 aspect-ratio、lazy loading、sandbox）
+  - [x] @dev T-556 — ログインページ更新（認証チェック→/stocks or ログインボタン表示）
+  - [x] @dev T-557 — トップページ更新（認証済み→/stocksリダイレクト、未認証→ランディング表示）
+  - [-] @qa T-558 — フロントエンドE2Eテスト（今回は除外）
 
 
 === Phase 5: 統合 & リリース ===
-  - [ ] @dev T-503 — ログアウトエンドポイント実装（POST /api/auth/logout）[dep: T-502]
+  - [x] @dev T-503 — ログアウトエンドポイント実装（POST /api/auth/logout + /api/me D1クエリ修正）
   - [ ] @pm T-571 — 本番デプロイチェックリスト策定（Google Cloud OIDC設定、Secrets投入、D1本番DB、Queue作成、DNS/ルーティング）[dep: T-500, T-522]
   - [ ] @dev T-572 — 本番構成設定（/api/*ルーティング、wrangler.tomlに本番D1 ID・Queue名設定）[dep: T-571]
   - [ ] @qa T-573 — 統合テスト（URL登録→Queue処理→メタデータ取得→一覧表示の全フロー検証）[dep: T-531, T-523, T-532]
@@ -128,6 +128,16 @@
 ---
 
 ## 7. Done
+
+### Phase 4: フロントエンド
+- [x] @dev T-503 — ログアウトエンドポイント実装 + /api/me D1クエリ修正
+- [x] @dev T-551 — ベースレイアウト実装（BaseLayout + Navbar + global.css + LoadingSpinner + EmptyState）
+- [x] @dev T-504+T-556 — ログインページ（Google Sign-In統合、認証チェック）
+- [x] @dev T-557 — トップページ更新（認証振り分け + ランディング表示）
+- [x] @dev T-555 — EmbedViewer コンポーネント（iframe + sandbox + lazy loading）
+- [x] @dev T-552 — ストック一覧画面（URLInputForm + StockList + カード動的生成）
+- [x] @dev T-553 — URL送信フロー + api-client.ts（typed fetch ラッパー）
+- [x] @dev T-554 — ストック詳細画面（embed + MemoEditor + 削除機能）
 
 ### Phase 3: APIエンドポイント
 - [x] @qa T-508 — 認証ミドルウェアのユニットテスト作成（11テスト）

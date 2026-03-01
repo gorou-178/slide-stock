@@ -1,0 +1,3 @@
+# Cloudflare Pages rewrites
+# /stocks/:id → stock-detail page (200 = rewrite, URL doesn't change)
+/stocks/:id /stock-detail/index.html 200

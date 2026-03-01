@@ -1,0 +1,40 @@
+<nav class="navbar" role="navigation" aria-label="メインナビゲーション">
+  <a href="/stocks" class="navbar-brand">Slide Stock</a>
+  <div class="navbar-right">
+    <span id="user-name" class="navbar-user"></span>
+    <button id="logout-btn" type="button" class="btn-logout">ログアウト</button>
+  </div>
+</nav>
+
+<script>
+  // ユーザー名を取得して表示
+  fetch('/api/me')
+    .then((res) => {
+      if (!res.ok) return null;
+      return res.json();
+    })
+    .then((user: { name?: string } | null) => {
+      if (user?.name) {
+        const el = document.getElementById('user-name');
+        if (el) el.textContent = user.name;
+      }
+    })
+    .catch(() => {
+      // ユーザー名取得失敗は無視（ナビバー表示に影響しない）
+    });
+
+  // ログアウト処理
+  const logoutBtn = document.getElementById('logout-btn');
+  logoutBtn?.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/auth/logout', { method: 'POST' });
+      if (res.ok) {
+        window.location.href = '/login';
+      } else {
+        alert('ログアウトに失敗しました。もう一度お試しください。');
+      }
+    } catch {
+      alert('サーバーに接続できません。ネットワーク接続を確認してください。');
+    }
+  });
+</script>

@@ -1,0 +1,13 @@
+---
+interface Props {
+  message: string;
+  submessage?: string;
+}
+
+const { message, submessage } = Astro.props;
+---
+
+<div class="empty-state">
+  <p>{message}</p>
+  {submessage && <p>{submessage}</p>}
+</div>

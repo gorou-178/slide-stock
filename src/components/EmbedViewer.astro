@@ -1,0 +1,26 @@
+---
+interface Props {
+  embedUrl: string | null;
+  provider: string;
+  title?: string | null;
+}
+
+const { embedUrl, provider, title } = Astro.props;
+---
+
+<div class="embed-viewer" data-provider={provider}>
+  {embedUrl ? (
+    <iframe
+      src={embedUrl}
+      title={title || 'スライド'}
+      class="embed-iframe"
+      loading="lazy"
+      allowfullscreen
+      sandbox="allow-scripts allow-same-origin allow-popups"
+    ></iframe>
+  ) : (
+    <div class="embed-placeholder">
+      <p>スライドの読み込みができません</p>
+    </div>
+  )}
+</div>
