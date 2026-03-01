@@ -78,7 +78,7 @@
 
 ---
 
-## 5. Backlog（Phase 3〜5: Phase 2 完了後に Next へ移動）
+## 5. Backlog
 
 
 === Phase 3: APIエンドポイント ===
@@ -115,6 +115,30 @@
   - [ ] @dev T-572 — 本番構成設定（/api/*ルーティング、wrangler.tomlに本番D1 ID・Queue名設定）[dep: T-571]
   - [ ] @qa T-573 — 統合テスト（URL登録→Queue処理→メタデータ取得→一覧表示の全フロー検証）[dep: T-531, T-523, T-532]
   - [ ] @qa T-575 — MVP受入テスト（CLAUDE.md セクション8の成功基準5項目を本番環境で検証）[dep: 全タスク]
+
+
+=== Phase 6A: セキュリティ強化 ===
+  - [ ] @dev T-601 — TEST_MODE 本番誤設定防止ガード（CALLBACK_URL が本番ドメインの場合 TEST_MODE を強制無効化 + 警告ログ出力）
+  - [ ] @dev T-602 — Docswell oEmbed embed_url ドメインバリデーション追加（docswell.com ドメインのみ許可、不正URLは embed_url=null で保存）
+  - [ ] @dev T-603 — auth_state Cookie に Secure フラグ追加（session Cookie と同じ isSecure 判定ロジックを適用）
+  - [ ] @dev T-604 — セキュリティレスポンスヘッダー追加（public/_headers: X-Frame-Options: DENY, X-Content-Type-Options: nosniff, 基本CSP, HSTS）
+  - [ ] @dev T-605 — Worker メイン fetch ハンドラーにグローバル try/catch 追加（未捕捉エラー→500 JSON + console.error）
+  - [ ] @dev T-606 — stocks テーブルに UNIQUE INDEX (user_id, canonical_url) 追加（マイグレーション + 409 制約違反ハンドリング）
+  - [ ] @qa T-607 — セキュリティ修正検証テスト（T-601〜T-606 の各修正が意図通り動作することを確認）[dep: T-601, T-602, T-603, T-604, T-605, T-606]
+
+
+=== Phase 6B: 本番公開手順 ===
+  - [ ] @pm T-610 — 本番デプロイ手順書作成（ops/ ディレクトリに配置、ops/ を .gitignore に追加。内容: Cloudflareリソース作成、D1マイグレーション、Secrets投入、Google OAuth設定、DNS/ルーティング、デプロイコマンド）
+
+
+=== Phase 6C: 可観測性 ===
+  - [ ] @dev T-620 — Worker ハンドラーに構造化ログ追加（認証成功/失敗、Stock CRUD操作、Queue処理結果、エラー詳細を console.log/error で出力。wrangler tail + Workers Trace Events で無料監視可能にする）
+  - [ ] @pm T-621 — 可観測性運用ガイド作成（ops/ に配置、.gitignore 対象。内容: Cloudflare ダッシュボード活用方法、wrangler tail 手順、DLQ監視、Workers Analytics/D1 Metrics/Queue Metrics の確認ポイント）
+
+
+=== Phase 6D: ランディングページ ===
+  - [ ] @pm T-630 — ランディングページ仕様策定（docs/landing-spec.md: サービス概要、対応プロバイダ紹介、利用イメージ、CTAボタン配置。認証不要の静的ページ。/stocks 一覧画面とは完全分離）
+  - [ ] @dev T-631 — トップページをサービスランディングページに刷新（T-630 仕様に基づき index.astro を再実装。認証チェック・リダイレクトを除去し、静的な公開ページとする。ログインは /login に誘導）[dep: T-630]
 
 
 ---
