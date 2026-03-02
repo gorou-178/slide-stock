@@ -1,0 +1,14 @@
+name = "slide-stock-api"
+main = "worker/index.ts"
+compatibility_date = "2025-02-14"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "slide-stock-db"
+database_id = "placeholder-replace-with-actual-id"
+
+# テスト環境: producer のみ定義（consumer は除外）
+# send() 自体は vi.mock() でスタブ化するためバインディングのみ必要
+[[queues.producers]]
+queue = "oembed-fetch"
+binding = "OEMBED_QUEUE"

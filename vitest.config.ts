@@ -15,7 +15,7 @@ export default defineWorkersConfig(async () => {
       poolOptions: {
         workers: {
           wrangler: {
-            configPath: "./wrangler.toml",
+            configPath: "./wrangler.test.toml",
           },
           miniflare: {
             d1Databases: ["DB"],
@@ -23,7 +23,6 @@ export default defineWorkersConfig(async () => {
               TEST_MIGRATIONS: migrations,
               TEST_MODE: "true",
             },
-            queueConsumers: {},
           },
         },
       },

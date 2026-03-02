@@ -10,8 +10,7 @@
  * - DELETE /api/stocks/:id: 削除（関連メモ連動・所有権チェック）
  */
 
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { env } from "cloudflare:test";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import {
   applyMigrationsAndSeed,
   resetSeedData,
@@ -21,6 +20,14 @@ import {
   TEST_STOCKS,
   TEST_MEMOS,
 } from "../../test/helpers";
+import { sendOEmbedMessage } from "../lib/queue";
+
+// --- Queue スタブ ---
+// vi.mock() はモジュールレベルで差し替えるため、
+// SELF.fetch() 経由の Worker 内部でも同じモックが使われる
+vi.mock("../lib/queue", () => ({
+  sendOEmbedMessage: vi.fn().mockResolvedValue(undefined),
+}));
 
 // --- テスト用ヘルパー ---
 
@@ -42,12 +49,13 @@ describe("POST /api/stocks", () => {
 
   beforeEach(async () => {
     await resetSeedData();
+    vi.mocked(sendOEmbedMessage).mockClear();
   });
 
   // --- 正常系 ---
 
   describe("正常系", () => {
-    it("P1: SpeakerDeck URL を登録できる（201）", async () => {
+    it("P1: SpeakerDeck URL を登録できる（201）+ Queue 送信", async () => {
       const res = await workerFetch("/api/stocks", "POST", {
         body: { url: "https://speakerdeck.com/newuser/new-slide" },
         headers: authHeaders(USER1),
@@ -64,6 +72,18 @@ describe("POST /api/stocks", () => {
       expect(body.memo_text).toBeNull();
       expect(body.id).toBeDefined();
       expect(body.created_at).toBeDefined();
+
+      // Queue にメッセージが送信されたことを検証
+      expect(sendOEmbedMessage).toHaveBeenCalledOnce();
+      expect(sendOEmbedMessage).toHaveBeenCalledWith(
+        expect.anything(), // queue binding
+        expect.objectContaining({
+          schemaVersion: 1,
+          stockId: body.id,
+          canonicalUrl: "https://speakerdeck.com/newuser/new-slide",
+          provider: "speakerdeck",
+        }),
+      );
     });
 
     it("P2: Docswell URL を登録できる（201）", async () => {
@@ -116,7 +136,7 @@ describe("POST /api/stocks", () => {
   // --- 異常系 ---
 
   describe("異常系", () => {
-    it("P5: url 未指定 → 400 INVALID_REQUEST", async () => {
+    it("P5: url 未指定 → 400 INVALID_REQUEST（Queue 送信なし）", async () => {
       const res = await workerFetch("/api/stocks", "POST", {
         body: {},
         headers: authHeaders(USER1),
@@ -125,6 +145,7 @@ describe("POST /api/stocks", () => {
       expect(res.status).toBe(400);
       const body = await parseJsonResponse<{ code: string }>(res);
       expect(body.code).toBe("INVALID_REQUEST");
+      expect(sendOEmbedMessage).not.toHaveBeenCalled();
     });
 
     it("P6: url が空文字 → 400 INVALID_URL", async () => {

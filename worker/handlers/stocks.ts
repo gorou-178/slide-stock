@@ -9,6 +9,7 @@ import {
   ProviderError,
   type ProviderErrorCode,
 } from "../lib/provider";
+import { sendOEmbedMessage } from "../lib/queue";
 
 export interface StockEnv {
   DB: D1Database;
@@ -145,7 +146,7 @@ export async function handleCreateStock(
   console.log(JSON.stringify({ action: "stock_created", stockId, provider, userId: auth.userId }));
 
   // 6. Queue メッセージ送信
-  await env.OEMBED_QUEUE.send({
+  await sendOEmbedMessage(env.OEMBED_QUEUE, {
     schemaVersion: 1,
     stockId,
     originalUrl: url,
