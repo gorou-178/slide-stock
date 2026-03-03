@@ -2,11 +2,29 @@ name = "slide-stock-api"
 main = "worker/index.ts"
 compatibility_date = "2025-02-14"
 
+# --- ルーティング ---
+# 本番環境: /api/* パスを Workers にルーティング
+# デプロイ前に database_id を実際の値に置き換えること
+routes = [
+  { pattern = "slide-stock.gorou.dev/api/*", zone_name = "gorou.dev" }
+]
+
+# --- 環境変数 ---
+[vars]
+CALLBACK_URL = "https://slide-stock.gorou.dev/api/auth/callback"
+
+# --- Secrets（wrangler secret put で設定） ---
+# GOOGLE_CLIENT_ID     — Google OAuth Client ID
+# GOOGLE_CLIENT_SECRET — Google OAuth Client Secret
+# SESSION_SECRET       — セッション Cookie 署名キー（openssl rand -hex 32）
+
+# --- D1 データベース ---
 [[d1_databases]]
 binding = "DB"
 database_name = "slide-stock-db"
 database_id = "placeholder-replace-with-actual-id"
 
+# --- Queue ---
 # oEmbed メタデータ取得用 Queue（oembed-spec.md セクション 5.4）
 [[queues.producers]]
 queue = "oembed-fetch"
