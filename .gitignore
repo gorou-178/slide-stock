@@ -53,6 +53,9 @@ tasks/logs/
 /blob-report/
 /playwright/.cache/
 
+# Ops (deployment guides, not for public repo)
+ops/
+
 # Temporary files
 *.tmp
 *.temp

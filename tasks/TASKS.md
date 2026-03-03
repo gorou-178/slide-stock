@@ -86,22 +86,22 @@
 
 
 === Phase 5: 統合 & リリース ===
-  - [ ] @pm T-571 — 本番デプロイチェックリスト策定（Google Cloud OIDC設定、Secrets投入、D1本番DB、Queue作成、DNS/ルーティング）[dep: T-500, T-522]
-  - [ ] @dev T-572 — 本番構成設定（/api/*ルーティング、wrangler.tomlに本番D1 ID・Queue名設定）[dep: T-571]
+  - [-] @pm T-571 — ~~本番デプロイチェックリスト策定~~ → T-610 に統合
+  - [ ] @dev T-572 — 本番構成設定（/api/*ルーティング、wrangler.tomlに本番D1 ID・Queue名設定）[dep: T-610]
   - [ ] @qa T-573 — 統合テスト（URL登録→Queue処理→メタデータ取得→一覧表示の全フロー検証）[dep: T-531, T-523, T-532]
   - [ ] @qa T-575 — MVP受入テスト（CLAUDE.md セクション8の成功基準5項目を本番環境で検証）[dep: 全タスク]
 
 
 === Phase 6A: セキュリティ強化（残タスク） ===
-  - [ ] @qa T-607 — セキュリティ修正検証テスト（T-601〜T-606 の各修正が意図通り動作することを確認）[dep: T-601, T-602, T-603, T-604, T-605, T-606]
+  - [x] @qa T-607 — セキュリティ修正検証テスト（T-601〜T-606 の各修正が意図通り動作することを確認、26テスト）[dep: T-601, T-602, T-603, T-604, T-605, T-606]
 
 
 === Phase 6B: 本番公開手順 ===
-  - [ ] @pm T-610 — 本番デプロイ手順書作成（ops/ ディレクトリに配置、ops/ を .gitignore に追加。内容: Cloudflareリソース作成、D1マイグレーション、Secrets投入、Google OAuth設定、DNS/ルーティング、デプロイコマンド）
+  - [x] @pm T-610 — 本番デプロイ手順書作成（ops/ ディレクトリに配置、ops/ を .gitignore に追加。内容: Cloudflareリソース作成、D1本番DB・Queue作成、マイグレーション、Secrets投入、Google OAuth設定、DNS/ルーティング、デプロイコマンド）[T-571 統合]
 
 
 === Phase 6C: 可観測性（残タスク） ===
-  - [ ] @pm T-621 — 可観測性運用ガイド作成（ops/ に配置、.gitignore 対象。内容: Cloudflare ダッシュボード活用方法、wrangler tail 手順、DLQ監視、Workers Analytics/D1 Metrics/Queue Metrics の確認ポイント）
+  - [x] @pm T-621 — 可観測性運用ガイド作成（ops/ に配置、.gitignore 対象。内容: Cloudflare ダッシュボード活用方法、wrangler tail 手順、DLQ監視、Workers Analytics/D1 Metrics/Queue Metrics の確認ポイント）
 
 
 === Phase 6D: ランディングページ ===
