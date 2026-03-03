@@ -615,6 +615,115 @@ footer {
   border-width: 0;
 }
 
+/* --- Hero --- */
+.hero {
+  text-align: center;
+  padding: var(--space-2xl) var(--space-md);
+}
+
+.hero-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin-bottom: var(--space-md);
+}
+
+.hero-description {
+  color: var(--color-text-secondary);
+  max-width: 480px;
+  margin: 0 auto var(--space-xl);
+  font-size: var(--font-size-lg);
+  line-height: 1.6;
+}
+
+.hero-actions {
+  display: flex;
+  gap: var(--space-md);
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn-lg {
+  padding: var(--space-md) var(--space-xl);
+  font-size: var(--font-size-lg);
+}
+
+/* --- Providers --- */
+.providers {
+  padding: var(--space-2xl) var(--space-md);
+}
+
+.section-title {
+  text-align: center;
+  font-size: var(--font-size-xl);
+  margin-bottom: var(--space-xl);
+}
+
+.provider-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-lg);
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+.provider-card {
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius);
+  padding: var(--space-lg);
+  text-align: center;
+}
+
+.provider-card .badge {
+  margin-bottom: var(--space-md);
+}
+
+.provider-card p {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* --- How It Works --- */
+.how-it-works {
+  padding: var(--space-2xl) var(--space-md);
+  background: var(--color-background);
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-xl);
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+.step {
+  text-align: center;
+}
+
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 50%;
+  font-weight: 700;
+  margin-bottom: var(--space-md);
+}
+
+.step h3 {
+  font-size: var(--font-size-lg);
+  margin-bottom: var(--space-sm);
+}
+
+.step p {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
 /* --- Responsive --- */
 @media (min-width: 640px) {
   .input-group {

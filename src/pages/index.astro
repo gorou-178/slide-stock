@@ -3,32 +3,54 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
 <BaseLayout title="トップ" showNavbar={false}>
-  <div class="landing" id="landing" hidden>
-    <h1>Slide Stock</h1>
-    <p>SpeakerDeck / Docswell / Google Slides のスライドを<br>URL入力だけでストックできるサービスです。</p>
-    <a href="/login" class="btn-primary">ログインして始める</a>
-  </div>
-
-  <div class="landing" id="landing-loading">
-    <div class="loading-spinner" role="status" aria-label="読み込み中">
-      <span class="sr-only">読み込み中...</span>
+  <section class="hero" aria-label="サービス紹介">
+    <h1 class="hero-title">Slide Stock</h1>
+    <p class="hero-description">
+      SpeakerDeck / Docswell / Google Slides のスライドを<br>
+      URL入力だけでストックできるサービスです。
+    </p>
+    <div class="hero-actions">
+      <a href="/login" class="btn-primary btn-lg">ログインして始める</a>
+      <a href="/stocks" class="btn-secondary btn-lg">ストック一覧へ</a>
     </div>
-  </div>
-</BaseLayout>
+  </section>
 
-<script>
-  // 認証済みなら /stocks にリダイレクト、未認証ならランディング表示
-  fetch('/api/me')
-    .then((res) => {
-      if (res.ok) {
-        window.location.href = '/stocks';
-      } else {
-        document.getElementById('landing-loading')!.hidden = true;
-        document.getElementById('landing')!.hidden = false;
-      }
-    })
-    .catch(() => {
-      document.getElementById('landing-loading')!.hidden = true;
-      document.getElementById('landing')!.hidden = false;
-    });
-</script>
+  <section class="providers" aria-label="対応プロバイダ">
+    <h2 class="section-title">対応プロバイダ</h2>
+    <div class="provider-cards">
+      <div class="provider-card">
+        <span class="badge badge-speakerdeck">SpeakerDeck</span>
+        <p>oEmbed 対応。スライドの embed 表示・メタデータ自動取得に対応。</p>
+      </div>
+      <div class="provider-card">
+        <span class="badge badge-docswell">Docswell</span>
+        <p>oEmbed 対応。スライドの embed 表示・メタデータ自動取得に対応。</p>
+      </div>
+      <div class="provider-card">
+        <span class="badge badge-google_slides">Google Slides</span>
+        <p>公開設定のスライドに対応。embed 表示が可能。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="how-it-works" aria-label="使い方">
+    <h2 class="section-title">使い方</h2>
+    <div class="steps">
+      <div class="step">
+        <span class="step-number">1</span>
+        <h3>URL を入力</h3>
+        <p>対応プロバイダのスライド URL を貼り付けるだけ。</p>
+      </div>
+      <div class="step">
+        <span class="step-number">2</span>
+        <h3>自動でメタデータ取得</h3>
+        <p>タイトル・著者名・サムネイルを自動で取得します。</p>
+      </div>
+      <div class="step">
+        <span class="step-number">3</span>
+        <h3>embed で閲覧 & メモ</h3>
+        <p>スライドを embed で閲覧し、メモを残せます。</p>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
