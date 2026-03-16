@@ -109,6 +109,25 @@
   - [x] @dev T-631 — トップページをサービスランディングページに刷新（T-630 仕様に基づき index.astro を再実装。認証チェック・リダイレクトを除去し、静的な公開ページとする。ログインは /login に誘導）[dep: T-630]
 
 
+=== Phase 7: アーキテクチャ改善 ===
+
+--- 優先度1〜2: 実施判断対象 ---
+
+  - [ ] @pm T-700 — [設計] SSR統合: Pages+Workers二重構成をAstro Cloudflareアダプター単一Workers構成に移行する設計策定（docs/adr/003-ssr-unification.md 作成。現状: Astro static build→Pages + 別途Workers API。改善: Astro SSR on Workers で統一し、デプロイ単位を1つに。ルーティング二重管理・CORS設定・wrangler.toml routes設定を解消。影響範囲: astro.config.mjs, wrangler.toml, worker/index.ts, src/pages/）
+  - [ ] @dev T-701 — [実装] SSR統合の実施（T-700 設計に基づき、Astro Cloudflare アダプター導入、Pages+Workers→単一Workersに統合、API Routes をAstro内に移行、wrangler.toml 簡素化）[dep: T-700]
+  - [ ] @qa T-702 — [検証] SSR統合後のリグレッションテスト（全既存テスト通過確認、E2Eテスト更新、本番同等環境での動作検証）[dep: T-701]
+
+  - [ ] @pm T-710 — [設計] Queue廃止: Cloudflare Queues→ctx.waitUntil()への移行設計策定（docs/adr/004-remove-queue.md 作成。現状: oEmbedメタデータ取得をQueue経由で非同期処理。改善: 個人ツールでは即時取得で十分、ctx.waitUntil()でレスポンス後にfetch実行。Queue/DLQ/コンシューマー/wrangler.toml Queue設定を削除し構成を大幅簡素化）
+  - [ ] @dev T-711 — [実装] Queue廃止の実施（T-710 設計に基づき、POST /api/stocks 内で ctx.waitUntil() による即時oEmbed取得に変更、queue-consumer.ts 削除、wrangler.toml から Queue 設定除去）[dep: T-710]
+  - [ ] @qa T-712 — [検証] Queue廃止後のリグレッションテスト（oEmbedメタデータ取得の動作確認、エラー時のフォールバック確認、既存テスト更新・通過）[dep: T-711]
+
+--- 優先度3以降: 検討段階 ---
+
+  - [ ] @pm T-720 — [検討] 認証委譲: カスタムGoogle OIDC実装→Cloudflare Accessへの移行検討（現状: auth.ts 242行 + session-auth.ts 77行 + test-auth-bypass.ts 100行 = 約420行の自前認証コード。Cloudflare Access導入で認証コード全削除可能。トレードオフ: Access有料プラン要否、柔軟性低下）
+  - [ ] @pm T-730 — [検討] ルーターフレームワーク導入: 手書きif-elseルーター→Hono/Astro API Routes検討（現状: worker/index.ts で手動パスマッチング。Hono導入でミドルウェアチェーン・型安全ルーティング・OpenAPI生成が可能。T-701でSSR統合する場合はAstro API Routesが自然な選択肢）
+  - [ ] @pm T-740 — [検討] ドキュメント統合: 10仕様書→2〜3ドキュメントへの集約検討（現状: docs/ に9仕様書+2 ADR。個人ツールとしては過剰。AGENTS.md に技術仕様を集約し、docs/ は ADR のみにする案を検討）
+
+
 ---
 
 ## 6. Failed / Cancelled

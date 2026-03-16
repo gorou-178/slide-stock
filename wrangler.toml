@@ -22,7 +22,7 @@ CALLBACK_URL = "https://slide-stock.gorou.dev/api/auth/callback"
 [[d1_databases]]
 binding = "DB"
 database_name = "slide-stock-db"
-database_id = "placeholder-replace-with-actual-id"
+database_id = "44ece48f-84d2-4a02-8df4-470f3b2b6e23"
 
 # --- Queue ---
 # oEmbed メタデータ取得用 Queue（oembed-spec.md セクション 5.4）
