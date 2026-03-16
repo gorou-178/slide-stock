@@ -109,6 +109,12 @@
   - [x] @dev T-631 — トップページをサービスランディングページに刷新（T-630 仕様に基づき index.astro を再実装。認証チェック・リダイレクトを除去し、静的な公開ページとする。ログインは /login に誘導）[dep: T-630]
 
 
+=== Phase 6E: 本番デプロイ不具合修正 ===
+  - [x] @dev T-810 — Worker ルーティング修正: Pages Functions プロキシ方式に変更（①wrangler.toml から routes を削除 ②functions/api/[[path]].ts を作成しリクエストを workers.dev に転送 ③Worker・Pages を再デプロイ。背景: gorou.dev が Cloudflare ゾーンでないため Worker routes が使えない。_redirects 200 proxy は外部 URL 非対応のため Pages Functions で実装）
+  - [x] @dev T-811 — ログインページのローディングスピナーが常時表示される不具合修正（global.css で .login-container の display:flex が hidden 属性を上書きしている。.login-container[hidden] { display: none; } を追加）
+  - [>] @qa T-812 — 本番デプロイ後の動作検証（T-810, T-811 修正後に実施。①Worker デプロイ成功 ②/api/health が {"status":"ok"} を返す ③ログインボタン押下で Google OAuth 画面に遷移 ④ログインページでローディングが消えてボタンが表示される）[dep: T-810, T-811]
+
+
 === Phase 7: アーキテクチャ改善 ===
 
 --- 優先度1〜2: 実施判断対象 ---

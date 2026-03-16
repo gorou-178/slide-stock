@@ -561,6 +561,10 @@ footer {
   padding: var(--space-xl);
 }
 
+.login-container[hidden] {
+  display: none;
+}
+
 .landing h1,
 .login-container h1 {
   font-size: var(--font-size-2xl);

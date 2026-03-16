@@ -1,3 +1,5 @@
 # Cloudflare Pages rewrites
 # /stocks/:id → stock-detail page (200 = rewrite, URL doesn't change)
 /stocks/:id /stock-detail/index.html 200
+
+# /api/* は Pages Functions (functions/api/[[path]].ts) が処理する

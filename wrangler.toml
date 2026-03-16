@@ -3,11 +3,8 @@ main = "worker/index.ts"
 compatibility_date = "2025-02-14"
 
 # --- ルーティング ---
-# 本番環境: /api/* パスを Workers にルーティング
-# デプロイ前に database_id を実際の値に置き換えること
-routes = [
-  { pattern = "slide-stock.gorou.dev/api/*", zone_name = "gorou.dev" }
-]
+# gorou.dev が Cloudflare ゾーンでないため Worker routes は使用不可。
+# 代わりに Pages の _redirects で /api/* を workers.dev へプロキシする。
 
 # --- 環境変数 ---
 [vars]
