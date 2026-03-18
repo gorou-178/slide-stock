@@ -119,9 +119,9 @@
 
 --- 優先度1〜2: 実施判断対象 ---
 
-  - [ ] @pm T-700 — [設計] SSR統合: Pages+Workers二重構成をAstro Cloudflareアダプター単一Workers構成に移行する設計策定（docs/adr/003-ssr-unification.md 作成。現状: Astro static build→Pages + 別途Workers API。改善: Astro SSR on Workers で統一し、デプロイ単位を1つに。ルーティング二重管理・CORS設定・wrangler.toml routes設定を解消。影響範囲: astro.config.mjs, wrangler.toml, worker/index.ts, src/pages/）
-  - [ ] @dev T-701 — [実装] SSR統合の実施（T-700 設計に基づき、Astro Cloudflare アダプター導入、Pages+Workers→単一Workersに統合、API Routes をAstro内に移行、wrangler.toml 簡素化）[dep: T-700]
-  - [ ] @qa T-702 — [検証] SSR統合後のリグレッションテスト（全既存テスト通過確認、E2Eテスト更新、本番同等環境での動作検証）[dep: T-701]
+  - [ ] @pm T-700 — [設計] SSR統合設計書作成（docs/adr/003-ssr-unification.md）。現状: Astro static→Pages + 別Workers API + Pages Functionsプロキシの三重構成。改善: @astrojs/cloudflare アダプターで単一Workers構成に統合。設計内容: ①Astro API Routes（src/pages/api/）への移行マッピング（11エンドポイント→8ファイル） ②astro.config.mjs の output:'server' + adapter 設定 ③wrangler.toml 簡素化（routes/pages_build_output_dir） ④削除対象: worker/index.ts, functions/api/[[path]].ts, public/_redirects ⑤既存handler/middleware/libコードは変更なしで再利用 ⑥デプロイスクリプト統合（deploy:worker + deploy:pages → 単一 deploy）
+  - [ ] @dev T-701 — [実装] SSR統合の実施（T-700 設計に基づく）。作業: ①@astrojs/cloudflare 導入 ②src/pages/api/ に Astro API Routes 作成（既存 worker/handlers を呼ぶ薄いラッパー） ③astro.config.mjs を SSR に変更（dev proxy・rewrite middleware 削除） ④wrangler.toml 簡素化 ⑤worker/index.ts, functions/, public/_redirects 削除 ⑥package.json スクリプト統合 ⑦WORKER_ORIGIN 環境変数を廃止 [dep: T-700]
+  - [ ] @qa T-702 — [検証] SSR統合後のリグレッションテスト。検証項目: ①既存ユニットテスト全通過（handler/middleware/libテストは変更なし） ②E2Eテスト更新・通過 ③本番同等環境でのデプロイ・動作確認（ヘルスチェック、認証フロー、ストックCRUD、メモ編集） ④Cloudflare Git連携の自動ビルドで Worker+フロントエンドが単一デプロイされることを確認 [dep: T-701]
 
   - [ ] @pm T-710 — [設計] Queue廃止: Cloudflare Queues→ctx.waitUntil()への移行設計策定（docs/adr/004-remove-queue.md 作成。現状: oEmbedメタデータ取得をQueue経由で非同期処理。改善: 個人ツールでは即時取得で十分、ctx.waitUntil()でレスポンス後にfetch実行。Queue/DLQ/コンシューマー/wrangler.toml Queue設定を削除し構成を大幅簡素化）
   - [ ] @dev T-711 — [実装] Queue廃止の実施（T-710 設計に基づき、POST /api/stocks 内で ctx.waitUntil() による即時oEmbed取得に変更、queue-consumer.ts 削除、wrangler.toml から Queue 設定除去）[dep: T-710]
