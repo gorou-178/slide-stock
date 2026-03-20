@@ -1,5 +1,4 @@
-import { testAuthBypass, type AuthContext } from './middleware/test-auth-bypass';
-import { sessionAuth } from './middleware/session-auth';
+import { resolveAuth, unauthorized } from './auth-helpers';
 import { handleLogin, handleCallback, handleLogout } from './handlers/auth';
 import {
   handleCreateStock,
@@ -18,26 +17,6 @@ export interface Env {
   GOOGLE_CLIENT_SECRET: string;
   CALLBACK_URL: string;
   OEMBED_QUEUE: Queue;
-}
-
-function unauthorized(): Response {
-  return Response.json(
-    { error: '認証が必要です', code: 'UNAUTHORIZED' },
-    { status: 401 },
-  );
-}
-
-/** 認証解決: TEST_MODE → testAuthBypass、本番 → sessionAuth */
-async function resolveAuth(
-  request: Request,
-  env: Env,
-): Promise<AuthContext | null> {
-  // テスト環境ではバイパスを優先
-  const testAuth = await testAuthBypass(request, env);
-  if (testAuth) return testAuth;
-
-  // 本番用セッション Cookie 検証
-  return sessionAuth(request, env);
 }
 
 export default {
