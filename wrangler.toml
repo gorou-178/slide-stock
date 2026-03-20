@@ -1,11 +1,7 @@
-name = "slide-stock-queue-worker"
+name = "slide-stock"
 main = "worker/index.ts"
 compatibility_date = "2025-02-14"
 compatibility_flags = ["nodejs_compat"]
-
-# --- Queue consumer 専用 Worker ---
-# HTTP ルーティングは Astro SSR (Pages) が担当。
-# この Worker は Queue consumer のみ。T-710/T-711 で廃止予定。
 
 # --- 環境変数 ---
 [vars]
@@ -21,16 +17,3 @@ CALLBACK_URL = "https://slide-stock.gorou.dev/api/auth/callback"
 binding = "DB"
 database_name = "slide-stock-db"
 database_id = "44ece48f-84d2-4a02-8df4-470f3b2b6e23"
-
-# --- Queue ---
-# oEmbed メタデータ取得用 Queue（oembed-spec.md セクション 5.4）
-[[queues.producers]]
-queue = "oembed-fetch"
-binding = "OEMBED_QUEUE"
-
-[[queues.consumers]]
-queue = "oembed-fetch"
-max_batch_size = 2
-max_batch_timeout = 3
-max_retries = 3
-dead_letter_queue = "oembed-fetch-dlq"

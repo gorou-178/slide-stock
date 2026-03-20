@@ -1,15 +1,13 @@
 /**
- * Worker エントリポイント — Queue consumer のみ。
- * HTTP ルーティングは Astro SSR API Routes が担当する。
- * T-710/T-711 で Queue 廃止後に本ファイルも削除予定。
+ * Worker エントリポイント（最小構成）。
+ * wrangler.test.toml の main 参照用。実際の HTTP ルーティングは Astro SSR が担当。
  */
 import type { Env } from './types';
-import { handleQueue } from './handlers/queue-consumer';
 
 export type { Env };
 
 export default {
-  async queue(batch: MessageBatch, env: Env): Promise<void> {
-    await handleQueue(batch as MessageBatch<any>, env);
+  async fetch(): Promise<Response> {
+    return new Response("Not used — Astro SSR handles routing", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
