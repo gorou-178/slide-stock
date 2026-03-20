@@ -123,8 +123,8 @@
   - [x] @dev T-701 — [実装] SSR統合の実施（T-700 設計 ADR-003 に基づく6フェーズ移行）。Phase1: テスト基盤安全化（resolveAuth抽出、workerFetch→ハンドラー直接呼出に書き換え）→ Phase2: @astrojs/cloudflare導入・astro.config.mjs SSR化 → Phase3: src/pages/api/ API Routes作成・prerender設定 → Phase4: worker/index.ts・functions/・_redirects削除 → Phase5: wrangler.toml簡素化・package.jsonスクリプト統合 → Phase6: E2E検証。各フェーズでテストGREEN維持 [dep: T-700]
   - [x] @qa T-702 — [検証] SSR統合後のリグレッションテスト。検証項目: ①既存ユニットテスト全通過（182/182 GREEN） ②E2Eテスト更新・通過（21/21 GREEN、既存バグ2件も修正） ③本番同等環境でのデプロイ・動作確認 → 本番デプロイ時に実施 ④Cloudflare Git連携 → 本番デプロイ時に実施 [dep: T-701]
 
-  - [ ] @pm T-710 — [設計] Queue廃止: Cloudflare Queues→ctx.waitUntil()への移行設計策定（docs/adr/004-remove-queue.md 作成。現状: oEmbedメタデータ取得をQueue経由で非同期処理。改善: 個人ツールでは即時取得で十分、ctx.waitUntil()でレスポンス後にfetch実行。Queue/DLQ/コンシューマー/wrangler.toml Queue設定を削除し構成を大幅簡素化）
-  - [ ] @dev T-711 — [実装] Queue廃止の実施（T-710 設計に基づき、POST /api/stocks 内で ctx.waitUntil() による即時oEmbed取得に変更、queue-consumer.ts 削除、wrangler.toml から Queue 設定除去）[dep: T-710]
+  - [x] @pm T-710 — [設計] Queue廃止: Cloudflare Queues→ctx.waitUntil()への移行設計策定（docs/adr/004-remove-queue.md 作成。7フェーズ移行: oembed-background.ts新規→handleCreateStock変更→API Route waitUntil追加→統合テスト移行→Queue関連削除→設定整理→E2E検証）
+  - [ ] @dev T-711 — [実装] Queue廃止の実施（T-710 設計 ADR-004 に基づく7フェーズ移行）。Phase1: oembed-background.ts新規+テスト → Phase2: handleCreateStockからQueue送信削除 → Phase3: API RouteにwaitUntil追加 → Phase4: integration.testをfetchAndSaveMetadataに移行 → Phase5: queue-consumer/worker-index/queue.ts削除 → Phase6: wrangler.toml/types/env.d.ts/package.json整理 → Phase7: E2E検証。各フェーズでテストGREEN維持 [dep: T-710]
   - [ ] @qa T-712 — [検証] Queue廃止後のリグレッションテスト（oEmbedメタデータ取得の動作確認、エラー時のフォールバック確認、既存テスト更新・通過）[dep: T-711]
 
 --- 優先度3以降: 検討段階 ---
