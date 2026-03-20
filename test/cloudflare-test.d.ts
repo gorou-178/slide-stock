@@ -1,4 +1,4 @@
-import type { Env } from "../worker/index";
+import type { Env } from "../worker/types";
 import type { D1Migration } from "@cloudflare/vitest-pool-workers/config";
 
 declare module "cloudflare:test" {

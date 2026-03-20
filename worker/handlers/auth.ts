@@ -1,5 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import type { Env } from "../index";
+import type { Env } from "../types";
 
 export interface AuthEnv extends Env {
   GOOGLE_CLIENT_ID: string;
