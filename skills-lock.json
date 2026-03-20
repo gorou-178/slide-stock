@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "skills": {
+    "ddd-module-pattern": {
+      "source": "j5ik2o/okite-ai",
+      "sourceType": "github",
+      "computedHash": "997a0dc3c13eacff66aa0a17d70a6bfc80d8ec6dbff74dc8c2f7df79f96d5ac8"
+    },
+    "domain-model-first": {
+      "source": "j5ik2o/okite-ai",
+      "sourceType": "github",
+      "computedHash": "7766287cc67707f9aeabe5ca33487a9e8d28fca0991f723436a7b1abd682d6b9"
+    },
+    "error-classification": {
+      "source": "j5ik2o/okite-ai",
+      "sourceType": "github",
+      "computedHash": "88ef374be5460211f9ba8b4e4b002b4922b806dd6b8dcda375d6eb675f53c539"
+    },
+    "error-handling": {
+      "source": "j5ik2o/okite-ai",
+      "sourceType": "github",
+      "computedHash": "8297fc7c44942bd50a9eae080b3331c9f2016cd39c42d84607566b869a383600"
+    }
+  }
+}

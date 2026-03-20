@@ -119,7 +119,7 @@
 
 --- 優先度1〜2: 実施判断対象 ---
 
-  - [ ] @pm T-700 — [設計] SSR統合設計書作成（docs/adr/003-ssr-unification.md）。現状: Astro static→Pages + 別Workers API + Pages Functionsプロキシの三重構成。改善: @astrojs/cloudflare アダプターで単一Workers構成に統合。設計内容: ①Astro API Routes（src/pages/api/）への移行マッピング（11エンドポイント→8ファイル） ②astro.config.mjs の output:'server' + adapter 設定 ③wrangler.toml 簡素化（routes/pages_build_output_dir） ④削除対象: worker/index.ts, functions/api/[[path]].ts, public/_redirects ⑤既存handler/middleware/libコードは変更なしで再利用 ⑥デプロイスクリプト統合（deploy:worker + deploy:pages → 単一 deploy）
+  - [x] @pm T-700 — [設計] SSR統合設計書作成（docs/adr/003-ssr-unification.md）。現状: Astro static→Pages + 別Workers API + Pages Functionsプロキシの三重構成。改善: @astrojs/cloudflare アダプターで単一Workers構成に統合。設計内容: ①Astro API Routes（src/pages/api/）への移行マッピング（11エンドポイント→8ファイル） ②astro.config.mjs の output:'server' + adapter 設定 ③wrangler.toml 簡素化（routes/pages_build_output_dir） ④削除対象: worker/index.ts, functions/api/[[path]].ts, public/_redirects ⑤既存handler/middleware/libコードは変更なしで再利用 ⑥デプロイスクリプト統合（deploy:worker + deploy:pages → 単一 deploy）
   - [ ] @dev T-701 — [実装] SSR統合の実施（T-700 設計に基づく）。作業: ①@astrojs/cloudflare 導入 ②src/pages/api/ に Astro API Routes 作成（既存 worker/handlers を呼ぶ薄いラッパー） ③astro.config.mjs を SSR に変更（dev proxy・rewrite middleware 削除） ④wrangler.toml 簡素化 ⑤worker/index.ts, functions/, public/_redirects 削除 ⑥package.json スクリプト統合 ⑦WORKER_ORIGIN 環境変数を廃止 [dep: T-700]
   - [ ] @qa T-702 — [検証] SSR統合後のリグレッションテスト。検証項目: ①既存ユニットテスト全通過（handler/middleware/libテストは変更なし） ②E2Eテスト更新・通過 ③本番同等環境でのデプロイ・動作確認（ヘルスチェック、認証フロー、ストックCRUD、メモ編集） ④Cloudflare Git連携の自動ビルドで Worker+フロントエンドが単一デプロイされることを確認 [dep: T-701]
 
