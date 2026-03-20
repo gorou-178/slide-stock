@@ -116,15 +116,7 @@ import MemoEditor from '../../components/MemoEditor.astro';
       detailBadge.className = `badge badge-${stock.provider}`;
       detailBadge.textContent = PROVIDER_LABELS[stock.provider] || stock.provider;
 
-      if (stock.status === 'pending') {
-        detailTitle.textContent = 'メタデータ取得中...';
-        detailTitle.classList.add('stock-card-pending');
-      } else if (stock.status === 'failed') {
-        detailTitle.textContent = 'メタデータの取得に失敗しました';
-        detailTitle.classList.add('stock-card-failed');
-      } else {
-        detailTitle.textContent = stock.title || 'タイトルなし';
-      }
+      detailTitle.textContent = stock.title || 'タイトルなし';
 
       if (stock.author_name) {
         detailAuthor.textContent = stock.author_name;

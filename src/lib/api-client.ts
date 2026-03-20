@@ -19,7 +19,7 @@ export interface StockItem {
   author_name: string | null;
   thumbnail_url: string | null;
   embed_url: string | null;
-  status: 'pending' | 'ready' | 'failed';
+  status: 'ready';
   memo_text: string | null;
   created_at: string;
   updated_at: string;
