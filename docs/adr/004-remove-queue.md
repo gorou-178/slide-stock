@@ -1,4 +1,4 @@
-# ADR-004: Queue 廃止 — Cloudflare Queues から ctx.waitUntil() への移行
+# ADR-004: Queue 廃止 — Cloudflare Queues から同期 oEmbed 取得への移行
 
 ## ステータス
 Proposed
@@ -10,9 +10,11 @@ Proposed
 oEmbed メタデータ取得は Cloudflare Queues による非同期処理で実装されている:
 
 ```
-POST /api/stocks → stock 作成 (pending) → Queue 送信
+POST /api/stocks → stock 作成 (pending) → Queue 送信 → 即座に 201 返却
                                             ↓
 Queue consumer → oEmbed fetch → DB 更新 (ready/failed)
+                                            ↓
+フロント: 3秒ごとにポーリング → pending→ready 検知 → カード差し替え
 ```
 
 関連リソース:
@@ -20,151 +22,99 @@ Queue consumer → oEmbed fetch → DB 更新 (ready/failed)
 - **Consumer**: `worker/handlers/queue-consumer.ts` — `handleQueue()`
 - **oEmbed fetch**: `worker/lib/oembed.ts` — プロバイダ別メタデータ取得
 - **Queue wrapper**: `worker/lib/queue.ts` — `sendOEmbedMessage()`
-- **Worker entry**: `worker/index.ts` — Queue consumer エクスポート（fetch ルーター削除済み）
+- **Worker entry**: `worker/index.ts` — Queue consumer エクスポート
 - **Config**: `wrangler.toml` — `queues.producers` / `queues.consumers` / DLQ
+- **フロント**: `stocks.astro` — ポーリング (~50行)、pending/failed カード表示分岐
 
 ### 課題
 
 | 課題 | 詳細 |
 |------|------|
-| **過剰な複雑性** | 個人ツールに Queues + DLQ + リトライ + バッチ処理は過剰 |
-| **二重 Worker 構成** | SSR 統合（ADR-003）後も Queue consumer のためだけに `worker/index.ts` が残存 |
+| **過剰な複雑性** | 個人ツールに Queues + DLQ + リトライ + バッチ処理 + ポーリングは過剰 |
+| **二重 Worker 構成** | SSR 統合後も Queue consumer のためだけに `worker/index.ts` が残存 |
 | **二重デプロイ** | `deploy`（Astro SSR）と `deploy:queue-worker`（Queue consumer）の2つが必要 |
-| **ポーリング UX** | クライアントが pending → ready への遷移を 3 秒間隔でポーリング（最大2分） |
+| **ポーリング UX** | クライアントが 3 秒間隔でポーリング（最大2分）。「取得中...」表示が残る |
 | **DLQ 運用負荷** | DLQ メッセージの監視・手動処理が必要だが、個人ツールでは事実上放置される |
+| **フロント複雑性** | `pending` / `failed` の状態分岐、ポーリングロジック、カード差し替え処理 |
 
 ### メタデータ取得の実測特性
 
 oEmbed fetch の所要時間はプロバイダ依存だが、いずれも数秒以内:
-- SpeakerDeck: oEmbed JSON fetch（1 回）→ 通常 1-2 秒
-- Docswell: oEmbed JSON fetch（1 回）→ 通常 1-2 秒
-- Google Slides: HTML fetch + title 抽出（1 回、失敗しても embed_url は確定的）→ 通常 1-3 秒
+- SpeakerDeck: oEmbed JSON fetch → 通常 1-2 秒
+- Docswell: oEmbed JSON fetch → 通常 1-2 秒
+- Google Slides: HTML fetch + title 抽出 → 通常 1-3 秒
 
-`ctx.waitUntil()` の 30 秒制限内に十分収まる。
-
-## 選択肢
-
-### A. ctx.waitUntil() によるインライン非同期処理（採用）
-
-- `POST /api/stocks` のレスポンス返却後に `ctx.waitUntil()` でメタデータ取得を実行
-- Queue / DLQ / consumer を全削除
-- 単一 Worker（Astro SSR）のみでデプロイ
-
-**利点**: 構成の大幅簡素化、デプロイ統一、ポーリング UX 改善の余地
-**欠点**: 自動リトライ喪失（30 秒制限、retry 機構なし）
-
-### B. 現状維持（Queue 継続）
-
-**利点**: リトライ・DLQ が使える
-**欠点**: 上記課題がそのまま残る。個人ツールでは過剰
-
-### C. レスポンス前に同期取得（await）
-
-- `handleCreateStock` 内で oEmbed fetch を `await` し、ready 状態で返す
-- ポーリング不要になる
-
-**利点**: 最もシンプル、status フィールド不要
-**欠点**: レスポンスが 1-3 秒遅延。UX 低下
+POST リクエスト内で await しても十分許容できる遅延。
 
 ## 決定
 
-**選択肢 A** を採用する。
+**同期取得方式を採用する。**
 
-理由:
-1. 個人ツールにおいて Queue のリトライ・DLQ は実質不要
-2. `ctx.waitUntil()` は Cloudflare Workers の標準 API で十分信頼性がある
-3. Worker 構成が SSR 単一に統合され、デプロイ・運用が大幅に簡素化される
-4. oEmbed fetch は 30 秒制限に対して十分なマージンがある
+`POST /api/stocks` 内で oEmbed メタデータ取得を await し、
+メタデータ込みの完全な stock データをレスポンスとして返す。
+
+```
+POST /api/stocks → stock 作成 → oEmbed fetch (await) → DB 更新 → 201 返却（完全データ）
+```
+
+Queue / DLQ / consumer / ポーリング / pending 状態を全て廃止。
+
+### 不採用の選択肢
+
+| 選択肢 | 不採用理由 |
+|--------|-----------|
+| **ctx.waitUntil()** | pending 状態とポーリングが残り、フロント簡素化が限定的 |
+| **現状維持（Queue）** | 上記課題がそのまま残る |
 
 ## 実装設計
 
 ### 1. 処理フロー（After）
 
 ```
-POST /api/stocks → stock 作成 (pending) → Response 201 返却
-                                            ↓ (ctx.waitUntil)
-                            oEmbed fetch → DB 更新 (ready/failed)
+POST /api/stocks
+  ├→ URL 検証・プロバイダ検出・重複チェック（現行通り）
+  ├→ stock INSERT (status = 'ready')
+  ├→ oEmbed fetch (await)
+  │   ├→ 成功: UPDATE stocks SET title, embed_url, ...
+  │   └→ 失敗: stock は embed なしで存続（title=null, embed_url=null）
+  └→ 201 返却（メタデータ込みの完全データ）
 ```
 
-### 2. 関数の責務分離
+### 2. エラーハンドリング
 
-```
-src/pages/api/stocks/index.ts   ← オーケストレーター（ctx.waitUntil 呼び出し）
-worker/handlers/stocks.ts       ← stock CRUD（Queue 送信を削除）
-worker/lib/oembed-background.ts ← NEW: バックグラウンド処理関数
-worker/lib/oembed.ts            ← プロバイダ別メタデータ取得（変更なし）
-```
-
-#### `worker/lib/oembed-background.ts`（新規）
-
-Queue consumer の `processMessage` + `markStockFailed` ロジックを抽出:
+oEmbed 取得失敗時も **stock 自体は作成する**。
+メタデータが取れない場合でも、元 URL は保持されるため価値がある。
 
 ```typescript
-import { fetchSpeakerDeckMetadata, fetchDocswellMetadata,
-         fetchGoogleSlidesMetadata, PermanentError } from "./oembed";
+// handleCreateStock 内（簡略）
+await insertStock(stockId, ...);  // status = 'ready'
 
-export async function fetchAndSaveMetadata(
-  stockId: string, canonicalUrl: string,
-  provider: string, db: D1Database
-): Promise<void> {
-  try {
-    const metadata = await fetchMetadataByProvider(provider, canonicalUrl);
-    await db.prepare(
-      `UPDATE stocks SET title=?, author_name=?, embed_url=?,
-       thumbnail_url=?, status='ready', updated_at=? WHERE id=?`
-    ).bind(metadata.title, metadata.authorName, metadata.embedUrl,
-           metadata.thumbnailUrl, new Date().toISOString(), stockId).run();
-    console.log(JSON.stringify({ action: "oembed_success", stockId, provider }));
-  } catch (error) {
-    if (error instanceof PermanentError) {
-      console.error(JSON.stringify({
-        action: "oembed_permanent_error", stockId, provider, error: error.message
-      }));
-    } else {
-      console.error(JSON.stringify({
-        action: "oembed_transient_error", stockId, provider, error: String(error)
-      }));
-    }
-    await db.prepare(
-      "UPDATE stocks SET status='failed', updated_at=? WHERE id=?"
-    ).bind(new Date().toISOString(), stockId).run();
-  }
+let metadata = { title: null, authorName: null, embedUrl: null, thumbnailUrl: null };
+try {
+  metadata = await fetchMetadataByProvider(provider, canonicalUrl);
+  await updateStockMetadata(stockId, metadata, env.DB);
+} catch (error) {
+  console.error(JSON.stringify({
+    action: "oembed_fetch_failed", stockId, provider, error: String(error)
+  }));
+  // メタデータなしで続行（stock は存続）
 }
+
+return Response.json({ id: stockId, title: metadata.title, ... }, { status: 201 });
 ```
 
-#### API Route の変更（`src/pages/api/stocks/index.ts`）
+### 3. status フィールドの扱い
 
-```typescript
-export const POST: APIRoute = async ({ request, locals }) => {
-  const env = locals.runtime.env;
-  const ctx = locals.runtime.ctx;
-  const authContext = await resolveAuth(request, env);
-  if (!authContext) return unauthorized();
+| 変更点 | 詳細 |
+|--------|------|
+| `pending` 状態 | **廃止**。stock は作成時点で常に `ready` |
+| `failed` 状態 | **廃止**。oEmbed 失敗時は `ready` だがメタデータが null |
+| DB スキーマ | `status` カラムは残す（`DEFAULT 'ready'` に変更）。マイグレーション不要（新規 INSERT で対応） |
+| API レスポンス | `status` フィールドは常に `'ready'` を返す |
 
-  const response = await handleCreateStock(request, env, authContext);
+### 4. バックエンド変更
 
-  if (response.status === 201) {
-    const body = await response.clone().json();
-    ctx.waitUntil(
-      fetchAndSaveMetadata(body.id, body.canonical_url, body.provider, env.DB)
-    );
-  }
-
-  return response;
-};
-```
-
-### 3. エラーハンドリング方針
-
-| エラー種別 | 現状（Queue） | 移行後（waitUntil） |
-|-----------|-------------|-------------------|
-| PermanentError（404/403 等） | ack + status=failed | status=failed（同じ） |
-| 一時エラー（500/timeout） | retry（最大3回） | status=failed + ログ |
-| 30 秒超過 | N/A（Queue は制限なし） | キャンセル + status=pending のまま |
-
-**一時エラーのリトライ喪失について**: 個人ツールでは「削除→再登録」で十分リカバリ可能。将来的に UI に「再取得」ボタンを追加する選択肢もあるが、現時点では不要。
-
-### 4. 削除対象
+#### 削除対象
 
 | ファイル | 理由 |
 |---------|------|
@@ -174,61 +124,57 @@ export const POST: APIRoute = async ({ request, locals }) => {
 | `worker/index.ts` | Queue consumer エクスポート（唯一の用途） |
 | `wrangler.toml` の `queues.*` セクション | Queue / DLQ 設定 |
 
-### 5. 変更対象
+#### 変更対象
 
 | ファイル | 変更内容 |
 |---------|---------|
-| `worker/handlers/stocks.ts` | `sendOEmbedMessage` 呼び出しを削除、`StockEnv` から `OEMBED_QUEUE` 除去 |
-| `worker/lib/oembed-background.ts` | 新規: バックグラウンドメタデータ取得関数 |
-| `src/pages/api/stocks/index.ts` | `ctx.waitUntil()` でバックグラウンド処理を起動 |
+| `worker/handlers/stocks.ts` | `handleCreateStock` 内で oEmbed fetch を await。`sendOEmbedMessage` 削除。`StockEnv` から `OEMBED_QUEUE` 除去。INSERT 時の status を `'ready'` に変更 |
 | `worker/types.ts` | `OEMBED_QUEUE: Queue` を削除 |
 | `src/env.d.ts` | `OEMBED_QUEUE: Queue` を削除 |
+| `src/pages/api/stocks/index.ts` | `OEMBED_QUEUE` 不要に伴う簡素化 |
 | `package.json` | `deploy:queue-worker` スクリプト削除 |
-| `wrangler.toml` | `name` を `slide-stock` に変更、Queue 設定削除、コメント更新 |
+| `wrangler.toml` | Queue 設定全削除、`name` を `slide-stock` に変更 |
+
+### 5. フロントエンド変更
+
+#### `src/lib/api-client.ts`
+- `StockItem.status` フィールド: `'ready'` 固定（型は残すが `pending`/`failed` を除去可）
+
+#### `src/pages/stocks.astro` — 大幅簡素化
+削除:
+- ポーリング関連（~50行）: `pendingStockIds`, `pollTimer`, `pollCount`, `pollPendingStocks()`, `startPolling()`, `stopPolling()`, `updateStockCard()`, `POLL_INTERVAL_MS`, `MAX_POLL_COUNT`
+- `createStockCard` 内の `pending` / `failed` 分岐: 常にリンク付きタイトルを表示
+- URL 送信後の `pendingStockIds.add()` / `startPolling()` 呼び出し
+
+結果: タイトルは常に `stock.title || 'タイトルなし'` のリンクを表示
+
+#### `src/pages/stocks/[id].astro` + `src/pages/stock-detail.astro`
+削除:
+- `stock.status === 'pending'` / `stock.status === 'failed'` の条件分岐
+- `stock-card-pending` / `stock-card-failed` クラス付与
+
+結果: タイトルは常に `stock.title || 'タイトルなし'`
+
+#### `public/styles/global.css`
+削除:
+- `.stock-card-pending` スタイル（3行）
+- `.stock-card-failed` スタイル（2行）
 
 ### 6. テスト変更
 
 | テスト | 変更内容 |
 |-------|---------|
 | `worker/handlers/queue-consumer.test.ts` | **削除** |
-| `worker/handlers/stocks.test.ts` | Queue 送信検証を削除。stock 作成の DB 検証のみに |
-| `worker/handlers/integration.test.ts` | `handleQueue` → `fetchAndSaveMetadata` に差し替え |
-| `worker/lib/oembed-background.test.ts` | 新規: `fetchAndSaveMetadata` のユニットテスト |
+| `worker/handlers/stocks.test.ts` | `handleCreateStock` テストを更新: Queue 送信検証 → メタデータ取得 + DB 更新の検証に変更。oEmbed の vi.mock で成功/失敗をテスト |
+| `worker/handlers/integration.test.ts` | Queue 処理を削除。`handleCreateStock` が直接メタデータ込みで返すことを検証 |
+| `worker/security-verification.test.ts` | `StockEnv` 変更に追従（`OEMBED_QUEUE` 除去） |
 
-#### 統合テストの変更例
-
-```typescript
-// Before
-const stock = await handleCreateStock(request, stockEnv(), auth("user1"));
-await handleQueue(mockBatch([queueMessage]), { DB: env.DB });
-const result = await handleGetStock(stockId, stockEnv(), auth("user1"));
-
-// After
-const stock = await handleCreateStock(request, stockEnv(), auth("user1"));
-await fetchAndSaveMetadata(stockId, canonicalUrl, provider, env.DB);
-const result = await handleGetStock(stockId, stockEnv(), auth("user1"));
-```
-
-### 7. フロントエンド影響
-
-ポーリングロジック（`stocks.astro` の `pollPendingStocks`）は**変更不要**。
-`ctx.waitUntil()` によるバックグラウンド処理は通常 1-3 秒で完了するため、
-ポーリング初回（3 秒後）で ready 状態を検出できる見込み。
-
-### 8. 移行フェーズ
+### 7. 移行フェーズ
 
 | Phase | 内容 | テストゲート |
 |-------|------|------------|
-| **Phase 1** | `oembed-background.ts` 新規作成 + テスト | 既存テスト GREEN + 新規テスト |
-| **Phase 2** | `handleCreateStock` から Queue 送信を削除、`StockEnv` 変更 | stocks.test.ts GREEN |
-| **Phase 3** | API Route に `ctx.waitUntil()` 追加 | ビルド成功 |
-| **Phase 4** | integration.test.ts を `fetchAndSaveMetadata` に移行 | 統合テスト GREEN |
-| **Phase 5** | Queue consumer / worker/index.ts / queue.ts 削除 | 全テスト GREEN |
-| **Phase 6** | wrangler.toml / types / env.d.ts / package.json 整理 | ビルド + 全テスト GREEN |
-| **Phase 7** | E2E テスト実行 | 全 E2E GREEN |
-
-### 9. ロールバック計画
-
-- 全変更は単一ブランチで実施し、マージ前にフル検証
-- Queue 関連コードは Git 履歴に残るため、必要時に復元可能
-- Cloudflare Dashboard の Queue リソース削除は本番デプロイ確認後に実施
+| **Phase 1** | `handleCreateStock` 内で oEmbed fetch を同期実行に変更。Queue 送信を削除。stocks.test.ts / integration.test.ts 更新 | ユニットテスト GREEN |
+| **Phase 2** | Queue consumer / worker/index.ts / queue.ts 削除。security-verification.test.ts 更新 | 全テスト GREEN |
+| **Phase 3** | wrangler.toml / types / env.d.ts / package.json 整理 | ビルド成功 + テスト GREEN |
+| **Phase 4** | フロントエンド簡素化: ポーリング削除、pending/failed 分岐削除、CSS 整理 | ビルド成功 |
+| **Phase 5** | E2E テスト実行・修正 | 全 E2E GREEN |

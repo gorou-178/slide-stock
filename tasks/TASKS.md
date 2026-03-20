@@ -124,8 +124,8 @@
   - [x] @qa T-702 — [検証] SSR統合後のリグレッションテスト。検証項目: ①既存ユニットテスト全通過（182/182 GREEN） ②E2Eテスト更新・通過（21/21 GREEN、既存バグ2件も修正） ③本番同等環境でのデプロイ・動作確認 → 本番デプロイ時に実施 ④Cloudflare Git連携 → 本番デプロイ時に実施 [dep: T-701]
 
   - [x] @pm T-710 — [設計] Queue廃止: Cloudflare Queues→ctx.waitUntil()への移行設計策定（docs/adr/004-remove-queue.md 作成。7フェーズ移行: oembed-background.ts新規→handleCreateStock変更→API Route waitUntil追加→統合テスト移行→Queue関連削除→設定整理→E2E検証）
-  - [ ] @dev T-711 — [実装] Queue廃止の実施（T-710 設計 ADR-004 に基づく7フェーズ移行）。Phase1: oembed-background.ts新規+テスト → Phase2: handleCreateStockからQueue送信削除 → Phase3: API RouteにwaitUntil追加 → Phase4: integration.testをfetchAndSaveMetadataに移行 → Phase5: queue-consumer/worker-index/queue.ts削除 → Phase6: wrangler.toml/types/env.d.ts/package.json整理 → Phase7: E2E検証。各フェーズでテストGREEN維持 [dep: T-710]
-  - [ ] @qa T-712 — [検証] Queue廃止後のリグレッションテスト（oEmbedメタデータ取得の動作確認、エラー時のフォールバック確認、既存テスト更新・通過）[dep: T-711]
+  - [ ] @dev T-711 — [実装] Queue廃止+同期取得+フロント簡素化（T-710 設計 ADR-004 に基づく5フェーズ移行）。Phase1: handleCreateStock内でoEmbed同期fetch、Queue送信削除、stocks.test.ts/integration.test.ts更新 → Phase2: queue-consumer/worker-index/queue.ts削除、security-verification.test.ts更新 → Phase3: wrangler.toml/types/env.d.ts/package.json整理 → Phase4: フロント簡素化（ポーリング~50行削除、pending/failed分岐削除、CSS整理） → Phase5: E2E検証。各フェーズでテストGREEN維持 [dep: T-710]
+  - [ ] @qa T-712 — [検証] Queue廃止+同期取得後のリグレッションテスト（①UT全通過 ②E2E全通過 ③POST /api/stocks が即座にメタデータ込みで返ること ④ポーリング・pending表示が完全に除去されていること）[dep: T-711]
 
 --- 優先度3以降: 検討段階 ---
 
