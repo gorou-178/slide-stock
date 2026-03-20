@@ -20,6 +20,7 @@
     "db:reset": "wrangler d1 execute slide-stock-db --local --command='DELETE FROM memos; DELETE FROM stocks; DELETE FROM users;'"
   },
   "dependencies": {
+    "@astrojs/cloudflare": "^12.6.13",
     "astro": "^5.17.1",
     "jose": "^6.1.3"
   },

@@ -1,6 +1,7 @@
 name = "slide-stock-api"
 main = "worker/index.ts"
 compatibility_date = "2025-02-14"
+compatibility_flags = ["nodejs_compat"]
 
 # --- ルーティング ---
 # gorou.dev が Cloudflare ゾーンでないため Worker routes は使用不可。
