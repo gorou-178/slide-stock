@@ -9,11 +9,15 @@ import {
   ProviderError,
   type ProviderErrorCode,
 } from "../lib/provider";
-import { sendOEmbedMessage } from "../lib/queue";
+import {
+  fetchSpeakerDeckMetadata,
+  fetchDocswellMetadata,
+  fetchGoogleSlidesMetadata,
+  type StockMetadata,
+} from "../lib/oembed";
 
 export interface StockEnv {
   DB: D1Database;
-  OEMBED_QUEUE: Queue;
 }
 
 interface StockRow {
@@ -127,7 +131,7 @@ export async function handleCreateStock(
   try {
     await env.DB.prepare(
       `INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, 'ready', ?, ?)`,
     )
       .bind(stockId, auth.userId, url, canonicalUrl, provider, now, now)
       .run();
@@ -145,14 +149,27 @@ export async function handleCreateStock(
 
   console.log(JSON.stringify({ action: "stock_created", stockId, provider, userId: auth.userId }));
 
-  // 6. Queue メッセージ送信
-  await sendOEmbedMessage(env.OEMBED_QUEUE, {
-    schemaVersion: 1,
-    stockId,
-    originalUrl: url,
-    canonicalUrl,
-    provider,
-  });
+  // 6. oEmbed メタデータ取得（同期）
+  let metadata: StockMetadata = {
+    title: null, authorName: null, thumbnailUrl: null, embedUrl: null,
+  };
+
+  try {
+    metadata = await fetchMetadataByProvider(provider, canonicalUrl);
+    await env.DB.prepare(
+      `UPDATE stocks SET title = ?, author_name = ?, embed_url = ?, thumbnail_url = ?, updated_at = ?
+       WHERE id = ?`,
+    )
+      .bind(metadata.title, metadata.authorName, metadata.embedUrl,
+            metadata.thumbnailUrl, new Date().toISOString(), stockId)
+      .run();
+    console.log(JSON.stringify({ action: "oembed_success", stockId, provider }));
+  } catch (error) {
+    console.error(JSON.stringify({
+      action: "oembed_fetch_failed", stockId, provider, error: String(error),
+    }));
+    // メタデータなしで続行（stock 自体は作成済み）
+  }
 
   // 7. レスポンス
   return Response.json(
@@ -161,17 +178,34 @@ export async function handleCreateStock(
       original_url: url,
       canonical_url: canonicalUrl,
       provider,
-      title: null,
-      author_name: null,
-      thumbnail_url: null,
-      embed_url: null,
-      status: "pending",
+      title: metadata.title,
+      author_name: metadata.authorName,
+      thumbnail_url: metadata.thumbnailUrl,
+      embed_url: metadata.embedUrl,
+      status: "ready",
       memo_text: null,
       created_at: now,
       updated_at: now,
     },
     { status: 201 },
   );
+}
+
+/** プロバイダに応じたメタデータ取得関数を呼び出す */
+async function fetchMetadataByProvider(
+  provider: string,
+  canonicalUrl: string,
+): Promise<StockMetadata> {
+  switch (provider) {
+    case "speakerdeck":
+      return fetchSpeakerDeckMetadata(canonicalUrl);
+    case "docswell":
+      return fetchDocswellMetadata(canonicalUrl);
+    case "google_slides":
+      return fetchGoogleSlidesMetadata(canonicalUrl);
+    default:
+      throw new Error(`Unknown provider: ${provider}`);
+  }
 }
 
 /**

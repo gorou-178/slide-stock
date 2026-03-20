@@ -1,16 +1,13 @@
 /**
  * T-536: Stock API ユニットテスト
  *
- * 仕様: docs/stock-api-spec.md セクション 8
- *
  * テスト対象:
- * - POST /api/stocks: URL登録（正常系・異常系・重複・プロバイダエラー）
+ * - POST /api/stocks: URL登録（正常系・異常系・重複・プロバイダエラー）+ oEmbed 同期取得
  * - GET /api/stocks: 一覧取得（ページネーション・メモ結合・ユーザー間分離）
  * - GET /api/stocks/:id: 詳細取得（所有権チェック）
  * - DELETE /api/stocks/:id: 削除（関連メモ連動・所有権チェック）
  *
- * ハンドラー直接呼出方式: workerFetch() (SELF.fetch) を使わず、
- * ハンドラー関数を直接呼び出す。ルーティング層に依存しない。
+ * ハンドラー直接呼出方式: ルーティング層に依存しない。
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
@@ -33,13 +30,39 @@ import {
   type StockEnv,
 } from "./stocks";
 import { handleGetMemo } from "./memo";
-import { sendOEmbedMessage } from "../lib/queue";
 import type { AuthContext } from "../middleware/test-auth-bypass";
 
-// --- Queue スタブ ---
-vi.mock("../lib/queue", () => ({
-  sendOEmbedMessage: vi.fn().mockResolvedValue(undefined),
-}));
+// --- oEmbed モック ---
+vi.mock("../lib/oembed", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../lib/oembed")>();
+  return {
+    ...original,
+    fetchSpeakerDeckMetadata: vi.fn().mockResolvedValue({
+      title: "Mock SpeakerDeck Slide",
+      authorName: "mock-author",
+      thumbnailUrl: null,
+      embedUrl: "https://speakerdeck.com/player/mock123",
+    }),
+    fetchDocswellMetadata: vi.fn().mockResolvedValue({
+      title: "Mock Docswell Slide",
+      authorName: "mock-dw-author",
+      thumbnailUrl: null,
+      embedUrl: "https://www.docswell.com/slide/MOCK01/embed",
+    }),
+    fetchGoogleSlidesMetadata: vi.fn().mockResolvedValue({
+      title: "Mock Google Slides",
+      authorName: null,
+      thumbnailUrl: null,
+      embedUrl: "https://docs.google.com/presentation/d/mock123/embed",
+    }),
+  };
+});
+
+import {
+  fetchSpeakerDeckMetadata,
+  fetchDocswellMetadata,
+  fetchGoogleSlidesMetadata,
+} from "../lib/oembed";
 
 // --- テスト用ヘルパー ---
 
@@ -51,7 +74,7 @@ function auth(userId: string): AuthContext {
 }
 
 function stockEnv(): StockEnv {
-  return { DB: env.DB, OEMBED_QUEUE: env.OEMBED_QUEUE };
+  return { DB: env.DB };
 }
 
 // ============================================================
@@ -64,13 +87,13 @@ describe("POST /api/stocks", () => {
 
   beforeEach(async () => {
     await resetSeedData();
-    vi.mocked(sendOEmbedMessage).mockClear();
+    vi.clearAllMocks();
   });
 
   // --- 正常系 ---
 
   describe("正常系", () => {
-    it("P1: SpeakerDeck URL を登録できる（201）+ Queue 送信", async () => {
+    it("P1: SpeakerDeck URL を登録できる（201）+ メタデータ取得", async () => {
       const request = createJsonRequest("/api/stocks", "POST", {
         url: "https://speakerdeck.com/newuser/new-slide",
       });
@@ -82,22 +105,17 @@ describe("POST /api/stocks", () => {
       expect(body.canonical_url).toBe(
         "https://speakerdeck.com/newuser/new-slide",
       );
-      expect(body.status).toBe("pending");
-      expect(body.title).toBeNull();
+      expect(body.status).toBe("ready");
+      expect(body.title).toBe("Mock SpeakerDeck Slide");
+      expect(body.embed_url).toBe("https://speakerdeck.com/player/mock123");
       expect(body.memo_text).toBeNull();
       expect(body.id).toBeDefined();
       expect(body.created_at).toBeDefined();
 
-      // Queue にメッセージが送信されたことを検証
-      expect(sendOEmbedMessage).toHaveBeenCalledOnce();
-      expect(sendOEmbedMessage).toHaveBeenCalledWith(
-        expect.anything(), // queue binding
-        expect.objectContaining({
-          schemaVersion: 1,
-          stockId: body.id,
-          canonicalUrl: "https://speakerdeck.com/newuser/new-slide",
-          provider: "speakerdeck",
-        }),
+      // oEmbed fetch が呼ばれたことを検証
+      expect(fetchSpeakerDeckMetadata).toHaveBeenCalledOnce();
+      expect(fetchSpeakerDeckMetadata).toHaveBeenCalledWith(
+        "https://speakerdeck.com/newuser/new-slide",
       );
     });
 
@@ -110,7 +128,8 @@ describe("POST /api/stocks", () => {
       expect(res.status).toBe(201);
       const body = await parseJsonResponse<Record<string, unknown>>(res);
       expect(body.provider).toBe("docswell");
-      expect(body.status).toBe("pending");
+      expect(body.status).toBe("ready");
+      expect(body.title).toBe("Mock Docswell Slide");
     });
 
     it("P3: Google Slides URL を登録できる（201）", async () => {
@@ -125,7 +144,8 @@ describe("POST /api/stocks", () => {
       expect(body.canonical_url).toBe(
         "https://docs.google.com/presentation/d/1abcdefghijklmnopqrstuvwx",
       );
-      expect(body.status).toBe("pending");
+      expect(body.status).toBe("ready");
+      expect(body.title).toBe("Mock Google Slides");
     });
 
     it("P4: URL が正規化される", async () => {
@@ -140,22 +160,39 @@ describe("POST /api/stocks", () => {
         "https://docs.google.com/presentation/d/1zyxwvutsrqponmlkjihgfedcba",
       );
     });
+
+    it("P5: oEmbed 取得失敗でも stock は作成される（メタデータ null）", async () => {
+      vi.mocked(fetchSpeakerDeckMetadata).mockRejectedValueOnce(
+        new Error("Network timeout"),
+      );
+
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://speakerdeck.com/newuser/fail-slide",
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(201);
+      const body = await parseJsonResponse<Record<string, unknown>>(res);
+      expect(body.status).toBe("ready");
+      expect(body.title).toBeNull();
+      expect(body.embed_url).toBeNull();
+    });
   });
 
   // --- 異常系 ---
 
   describe("異常系", () => {
-    it("P5: url 未指定 → 400 INVALID_REQUEST（Queue 送信なし）", async () => {
+    it("P6: url 未指定 → 400 INVALID_REQUEST", async () => {
       const request = createJsonRequest("/api/stocks", "POST", {});
       const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(400);
       const body = await parseJsonResponse<{ code: string }>(res);
       expect(body.code).toBe("INVALID_REQUEST");
-      expect(sendOEmbedMessage).not.toHaveBeenCalled();
+      expect(fetchSpeakerDeckMetadata).not.toHaveBeenCalled();
     });
 
-    it("P6: url が空文字 → 400 INVALID_URL", async () => {
+    it("P7: url が空文字 → 400 INVALID_URL", async () => {
       const request = createJsonRequest("/api/stocks", "POST", { url: "" });
       const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
@@ -164,7 +201,7 @@ describe("POST /api/stocks", () => {
       expect(body.code).toBe("INVALID_URL");
     });
 
-    it("P7: 不正な URL 形式 → 400 INVALID_URL", async () => {
+    it("P8: 不正な URL 形式 → 400 INVALID_URL", async () => {
       const request = createJsonRequest("/api/stocks", "POST", {
         url: "not-a-url",
       });
@@ -175,7 +212,7 @@ describe("POST /api/stocks", () => {
       expect(body.code).toBe("INVALID_URL");
     });
 
-    it("P8: 未対応プロバイダ → 400 UNSUPPORTED_PROVIDER", async () => {
+    it("P9: 未対応プロバイダ → 400 UNSUPPORTED_PROVIDER", async () => {
       const request = createJsonRequest("/api/stocks", "POST", {
         url: "https://slideshare.net/user/slide",
       });
@@ -186,7 +223,7 @@ describe("POST /api/stocks", () => {
       expect(body.code).toBe("UNSUPPORTED_PROVIDER");
     });
 
-    it("P9: 不正なパス形式 → 400 INVALID_FORMAT", async () => {
+    it("P10: 不正なパス形式 → 400 INVALID_FORMAT", async () => {
       const request = createJsonRequest("/api/stocks", "POST", {
         url: "https://speakerdeck.com/useronly",
       });
@@ -197,7 +234,7 @@ describe("POST /api/stocks", () => {
       expect(body.code).toBe("INVALID_FORMAT");
     });
 
-    it("P10: embed URL（対象外）→ 400 UNSUPPORTED_URL_TYPE", async () => {
+    it("P11: embed URL（対象外）→ 400 UNSUPPORTED_URL_TYPE", async () => {
       const request = createJsonRequest("/api/stocks", "POST", {
         url: "https://speakerdeck.com/player/abc123def",
       });
@@ -208,7 +245,7 @@ describe("POST /api/stocks", () => {
       expect(body.code).toBe("UNSUPPORTED_URL_TYPE");
     });
 
-    it("P11: 重複 URL 登録 → 409 DUPLICATE_STOCK", async () => {
+    it("P12: 重複 URL 登録 → 409 DUPLICATE_STOCK", async () => {
       // シードデータに既存の SpeakerDeck stock がある
       const existingUrl = TEST_STOCKS[0].canonical_url;
       const request = createJsonRequest("/api/stocks", "POST", {
@@ -221,7 +258,7 @@ describe("POST /api/stocks", () => {
       expect(body.code).toBe("DUPLICATE_STOCK");
     });
 
-    it("P12: JSON パースエラー → 400 INVALID_REQUEST", async () => {
+    it("P13: JSON パースエラー → 400 INVALID_REQUEST", async () => {
       const request = createRawRequest(
         "/api/stocks",
         "POST",
@@ -233,10 +270,6 @@ describe("POST /api/stocks", () => {
       const body = await parseJsonResponse<{ code: string }>(res);
       expect(body.code).toBe("INVALID_REQUEST");
     });
-
-    // P13: 未認証テストは session-auth.test.ts でカバー済み
-    // TEST_MODE=true 環境ではデフォルトテストユーザーが自動注入されるため、
-    // ここでは認証ミドルウェア自体のテストは行わない
   });
 
   // --- 重複チェック: ユーザー間の分離 ---

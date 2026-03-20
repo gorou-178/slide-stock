@@ -52,7 +52,7 @@ function memoEnv(): MemoEnv {
 }
 
 function stockEnv(): StockEnv {
-  return { DB: env.DB, OEMBED_QUEUE: env.OEMBED_QUEUE };
+  return { DB: env.DB };
 }
 
 // ============================================================

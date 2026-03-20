@@ -24,13 +24,27 @@ import {
   TEST_USERS,
 } from "../test/helpers";
 import { handleCreateStock, type StockEnv } from "./handlers/stocks";
-import { sendOEmbedMessage } from "./lib/queue";
 import type { AuthContext } from "./middleware/test-auth-bypass";
 
-// Queue スタブ
-vi.mock("./lib/queue", () => ({
-  sendOEmbedMessage: vi.fn().mockResolvedValue(undefined),
-}));
+// oEmbed モック
+vi.mock("./lib/oembed", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./lib/oembed")>();
+  return {
+    ...original,
+    fetchSpeakerDeckMetadata: vi.fn().mockResolvedValue({
+      title: "Mock Slide", authorName: "mock-author",
+      thumbnailUrl: null, embedUrl: "https://speakerdeck.com/player/mock",
+    }),
+    fetchDocswellMetadata: vi.fn().mockResolvedValue({
+      title: "Mock Slide", authorName: "mock-author",
+      thumbnailUrl: null, embedUrl: "https://www.docswell.com/slide/MOCK/embed",
+    }),
+    fetchGoogleSlidesMetadata: vi.fn().mockResolvedValue({
+      title: "Mock Slide", authorName: null,
+      thumbnailUrl: null, embedUrl: "https://docs.google.com/presentation/d/mock/embed",
+    }),
+  };
+});
 
 // ============================================================
 // T-601: TEST_MODE 本番誤設定防止ガード
@@ -77,6 +91,14 @@ describe("T-601: TEST_MODE 本番誤設定防止ガード", () => {
 // ============================================================
 describe("T-602: Docswell embed_url ドメインバリデーション", () => {
   let originalFetch: typeof fetch;
+  // vi.mock でモジュール全体が差し替わっているため、実際のドメインバリデーションを
+  // テストするには vi.importActual で本物の関数を取得する
+  let realFetchDocswellMetadata: typeof fetchDocswellMetadata;
+
+  beforeAll(async () => {
+    const actual = await vi.importActual<typeof import("./lib/oembed")>("./lib/oembed");
+    realFetchDocswellMetadata = actual.fetchDocswellMetadata;
+  });
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -84,7 +106,6 @@ describe("T-602: Docswell embed_url ドメインバリデーション", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    vi.restoreAllMocks();
   });
 
   function mockDocswellResponse(url: string) {
@@ -103,41 +124,41 @@ describe("T-602: Docswell embed_url ドメインバリデーション", () => {
 
   it("正規の docswell.com ドメイン URL は受け入れる", async () => {
     mockDocswellResponse("https://www.docswell.com/slide/59VDWM/embed");
-    const result = await fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM");
+    const result = await realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM");
     expect(result.embedUrl).toBe("https://www.docswell.com/slide/59VDWM/embed");
   });
 
   it("サブドメインなしの docswell.com URL も受け入れる", async () => {
     mockDocswellResponse("https://docswell.com/slide/59VDWM/embed");
-    const result = await fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM");
+    const result = await realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM");
     expect(result.embedUrl).toBe("https://docswell.com/slide/59VDWM/embed");
   });
 
   it("HTTP プロトコルの URL は PermanentError", async () => {
     mockDocswellResponse("http://www.docswell.com/slide/59VDWM/embed");
     await expect(
-      fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
     ).rejects.toThrow(PermanentError);
   });
 
   it("docswell.com 以外のドメインは PermanentError", async () => {
     mockDocswellResponse("https://evil.example.com/slide/embed");
     await expect(
-      fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
     ).rejects.toThrow(PermanentError);
   });
 
   it("不正な URL 形式は PermanentError", async () => {
     mockDocswellResponse("not-a-valid-url");
     await expect(
-      fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
     ).rejects.toThrow(PermanentError);
   });
 
   it("docswell.com のサブドメインを装った偽ドメインは PermanentError", async () => {
     mockDocswellResponse("https://docswell.com.evil.example.com/slide/embed");
     await expect(
-      fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
     ).rejects.toThrow(PermanentError);
   });
 });
@@ -164,7 +185,6 @@ describe("T-603: Cookie Secure フラグ（HTTPS 環境）", () => {
     GOOGLE_CLIENT_SECRET: "test-client-secret",
     SESSION_SECRET: "a".repeat(64),
     CALLBACK_URL: "https://slide-stock.gorou.dev/api/auth/callback",
-    OEMBED_QUEUE: {} as Queue,
   };
 
   const HTTP_ENV: AuthEnv = {
@@ -303,7 +323,7 @@ describe("T-606: UNIQUE INDEX による重複防止", () => {
   }
 
   function stockEnv(): StockEnv {
-    return { DB: env.DB, OEMBED_QUEUE: env.OEMBED_QUEUE };
+    return { DB: env.DB };
   }
 
   beforeAll(async () => {
@@ -312,7 +332,7 @@ describe("T-606: UNIQUE INDEX による重複防止", () => {
 
   beforeEach(async () => {
     await resetSeedData();
-    vi.mocked(sendOEmbedMessage).mockClear();
+    vi.clearAllMocks();
   });
 
   it("同一ユーザーが同一 URL を登録すると 409 DUPLICATE_STOCK", async () => {
