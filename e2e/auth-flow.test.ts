@@ -106,13 +106,23 @@ test.describe("認証フロー E2E テスト", () => {
     test("ログアウトボタンを押すとログインページにリダイレクトされる", async ({
       authenticatedPage,
     }) => {
-      // /api/me に認証済みレスポンスを返す
+      let loggedOut = false;
+
+      // /api/me: ログアウト前は認証済み、後は 401
       await authenticatedPage.route("**/api/me", (route) => {
-        route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify(DEFAULT_TEST_USER),
-        });
+        if (loggedOut) {
+          route.fulfill({
+            status: 401,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "認証が必要です", code: "UNAUTHORIZED" }),
+          });
+        } else {
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(DEFAULT_TEST_USER),
+          });
+        }
       });
 
       // /api/stocks に空一覧を返す
@@ -124,8 +134,9 @@ test.describe("認証フロー E2E テスト", () => {
         });
       });
 
-      // /api/auth/logout にモックレスポンスを返す
+      // /api/auth/logout: ログアウト状態に切り替え
       await authenticatedPage.route("**/api/auth/logout", (route) => {
+        loggedOut = true;
         route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -144,7 +155,6 @@ test.describe("認証フロー E2E テスト", () => {
       await expect(logoutButton).toBeVisible();
 
       // ログアウト後は /login にリダイレクトされる
-      // ナビゲーションの完了を待つ
       await Promise.all([
         authenticatedPage.waitForURL(/\/login/),
         logoutButton.click(),
@@ -172,9 +182,9 @@ test.describe("認証フロー E2E テスト", () => {
     }) => {
       await page.goto("/");
 
-      await expect(page.getByText("SpeakerDeck")).toBeVisible();
-      await expect(page.getByText("Docswell")).toBeVisible();
-      await expect(page.getByText("Google Slides")).toBeVisible();
+      await expect(page.getByText("SpeakerDeck", { exact: true })).toBeVisible();
+      await expect(page.getByText("Docswell", { exact: true })).toBeVisible();
+      await expect(page.getByText("Google Slides", { exact: true })).toBeVisible();
     });
 
     test("ランディングページに使い方セクションが表示される", async ({
