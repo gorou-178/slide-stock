@@ -8,36 +8,51 @@
  * - GET /api/stocks: 一覧取得（ページネーション・メモ結合・ユーザー間分離）
  * - GET /api/stocks/:id: 詳細取得（所有権チェック）
  * - DELETE /api/stocks/:id: 削除（関連メモ連動・所有権チェック）
+ *
+ * ハンドラー直接呼出方式: workerFetch() (SELF.fetch) を使わず、
+ * ハンドラー関数を直接呼び出す。ルーティング層に依存しない。
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { env } from "cloudflare:test";
 import {
   applyMigrationsAndSeed,
   resetSeedData,
-  workerFetch,
+  createJsonRequest,
+  createRawRequest,
   parseJsonResponse,
   TEST_USERS,
   TEST_STOCKS,
   TEST_MEMOS,
 } from "../../test/helpers";
+import {
+  handleCreateStock,
+  handleListStocks,
+  handleGetStock,
+  handleDeleteStock,
+  type StockEnv,
+} from "./stocks";
+import { handleGetMemo } from "./memo";
 import { sendOEmbedMessage } from "../lib/queue";
+import type { AuthContext } from "../middleware/test-auth-bypass";
 
 // --- Queue スタブ ---
-// vi.mock() はモジュールレベルで差し替えるため、
-// SELF.fetch() 経由の Worker 内部でも同じモックが使われる
 vi.mock("../lib/queue", () => ({
   sendOEmbedMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
 // --- テスト用ヘルパー ---
 
-/** 認証ヘッダー付きリクエスト */
-function authHeaders(userId: string): Record<string, string> {
-  return { "X-Test-User-Id": userId };
-}
-
 const USER1 = TEST_USERS[0].id; // test-user-1
 const USER2 = TEST_USERS[1].id; // test-user-2
+
+function auth(userId: string): AuthContext {
+  return { userId };
+}
+
+function stockEnv(): StockEnv {
+  return { DB: env.DB, OEMBED_QUEUE: env.OEMBED_QUEUE };
+}
 
 // ============================================================
 // POST /api/stocks
@@ -56,10 +71,10 @@ describe("POST /api/stocks", () => {
 
   describe("正常系", () => {
     it("P1: SpeakerDeck URL を登録できる（201）+ Queue 送信", async () => {
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: { url: "https://speakerdeck.com/newuser/new-slide" },
-        headers: authHeaders(USER1),
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://speakerdeck.com/newuser/new-slide",
       });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(201);
       const body = await parseJsonResponse<Record<string, unknown>>(res);
@@ -87,12 +102,10 @@ describe("POST /api/stocks", () => {
     });
 
     it("P2: Docswell URL を登録できる（201）", async () => {
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: {
-          url: "https://www.docswell.com/s/newuser/ABC123-new-slide",
-        },
-        headers: authHeaders(USER1),
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://www.docswell.com/s/newuser/ABC123-new-slide",
       });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(201);
       const body = await parseJsonResponse<Record<string, unknown>>(res);
@@ -101,12 +114,10 @@ describe("POST /api/stocks", () => {
     });
 
     it("P3: Google Slides URL を登録できる（201）", async () => {
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: {
-          url: "https://docs.google.com/presentation/d/1abcdefghijklmnopqrstuvwx/edit",
-        },
-        headers: authHeaders(USER1),
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://docs.google.com/presentation/d/1abcdefghijklmnopqrstuvwx/edit",
       });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(201);
       const body = await parseJsonResponse<Record<string, unknown>>(res);
@@ -118,12 +129,10 @@ describe("POST /api/stocks", () => {
     });
 
     it("P4: URL が正規化される", async () => {
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: {
-          url: "https://docs.google.com/presentation/d/1zyxwvutsrqponmlkjihgfedcba/edit#slide=id.p",
-        },
-        headers: authHeaders(USER1),
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://docs.google.com/presentation/d/1zyxwvutsrqponmlkjihgfedcba/edit#slide=id.p",
       });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(201);
       const body = await parseJsonResponse<Record<string, unknown>>(res);
@@ -137,10 +146,8 @@ describe("POST /api/stocks", () => {
 
   describe("異常系", () => {
     it("P5: url 未指定 → 400 INVALID_REQUEST（Queue 送信なし）", async () => {
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: {},
-        headers: authHeaders(USER1),
-      });
+      const request = createJsonRequest("/api/stocks", "POST", {});
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(400);
       const body = await parseJsonResponse<{ code: string }>(res);
@@ -149,10 +156,8 @@ describe("POST /api/stocks", () => {
     });
 
     it("P6: url が空文字 → 400 INVALID_URL", async () => {
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: { url: "" },
-        headers: authHeaders(USER1),
-      });
+      const request = createJsonRequest("/api/stocks", "POST", { url: "" });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(400);
       const body = await parseJsonResponse<{ code: string }>(res);
@@ -160,10 +165,10 @@ describe("POST /api/stocks", () => {
     });
 
     it("P7: 不正な URL 形式 → 400 INVALID_URL", async () => {
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: { url: "not-a-url" },
-        headers: authHeaders(USER1),
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "not-a-url",
       });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(400);
       const body = await parseJsonResponse<{ code: string }>(res);
@@ -171,10 +176,10 @@ describe("POST /api/stocks", () => {
     });
 
     it("P8: 未対応プロバイダ → 400 UNSUPPORTED_PROVIDER", async () => {
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: { url: "https://slideshare.net/user/slide" },
-        headers: authHeaders(USER1),
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://slideshare.net/user/slide",
       });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(400);
       const body = await parseJsonResponse<{ code: string }>(res);
@@ -182,10 +187,10 @@ describe("POST /api/stocks", () => {
     });
 
     it("P9: 不正なパス形式 → 400 INVALID_FORMAT", async () => {
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: { url: "https://speakerdeck.com/useronly" },
-        headers: authHeaders(USER1),
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://speakerdeck.com/useronly",
       });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(400);
       const body = await parseJsonResponse<{ code: string }>(res);
@@ -193,10 +198,10 @@ describe("POST /api/stocks", () => {
     });
 
     it("P10: embed URL（対象外）→ 400 UNSUPPORTED_URL_TYPE", async () => {
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: { url: "https://speakerdeck.com/player/abc123def" },
-        headers: authHeaders(USER1),
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://speakerdeck.com/player/abc123def",
       });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(400);
       const body = await parseJsonResponse<{ code: string }>(res);
@@ -206,10 +211,10 @@ describe("POST /api/stocks", () => {
     it("P11: 重複 URL 登録 → 409 DUPLICATE_STOCK", async () => {
       // シードデータに既存の SpeakerDeck stock がある
       const existingUrl = TEST_STOCKS[0].canonical_url;
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: { url: existingUrl },
-        headers: authHeaders(USER1),
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: existingUrl,
       });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
       expect(res.status).toBe(409);
       const body = await parseJsonResponse<{ code: string }>(res);
@@ -217,26 +222,15 @@ describe("POST /api/stocks", () => {
     });
 
     it("P12: JSON パースエラー → 400 INVALID_REQUEST", async () => {
-      const res = await workerFetch("/api/stocks", "POST", {
-        body: "not-json" as unknown,
-        headers: authHeaders(USER1),
-      });
+      const request = createRawRequest(
+        "/api/stocks",
+        "POST",
+        "invalid-json{{{",
+      );
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
-      // workerFetch が JSON.stringify するので実際には valid JSON になる
-      // 代わりに body なしの raw リクエストをテスト
-      const rawRes = await (
-        await import("cloudflare:test")
-      ).SELF.fetch("http://localhost/api/stocks", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Test-User-Id": USER1,
-        },
-        body: "invalid-json{{{",
-      });
-
-      expect(rawRes.status).toBe(400);
-      const body = await parseJsonResponse<{ code: string }>(rawRes);
+      expect(res.status).toBe(400);
+      const body = await parseJsonResponse<{ code: string }>(res);
       expect(body.code).toBe("INVALID_REQUEST");
     });
 
@@ -251,10 +245,10 @@ describe("POST /api/stocks", () => {
     const existingUrl = TEST_STOCKS[0].canonical_url;
 
     // user-2 で登録（user-1 の既存 stock と同じ URL）
-    const res = await workerFetch("/api/stocks", "POST", {
-      body: { url: existingUrl },
-      headers: authHeaders(USER2),
+    const request = createJsonRequest("/api/stocks", "POST", {
+      url: existingUrl,
     });
+    const res = await handleCreateStock(request, stockEnv(), auth(USER2));
 
     expect(res.status).toBe(201);
   });
@@ -275,9 +269,8 @@ describe("GET /api/stocks", () => {
   // --- 正常系 ---
 
   it("L1: デフォルト一覧取得（created_at DESC）", async () => {
-    const res = await workerFetch("/api/stocks", "GET", {
-      headers: authHeaders(USER1),
-    });
+    const request = createJsonRequest("/api/stocks");
+    const res = await handleListStocks(request, stockEnv(), auth(USER1));
 
     expect(res.status).toBe(200);
     const body = await parseJsonResponse<{
@@ -299,9 +292,8 @@ describe("GET /api/stocks", () => {
   });
 
   it("L2: limit 指定", async () => {
-    const res = await workerFetch("/api/stocks?limit=2", "GET", {
-      headers: authHeaders(USER1),
-    });
+    const request = createJsonRequest("/api/stocks?limit=2");
+    const res = await handleListStocks(request, stockEnv(), auth(USER1));
 
     expect(res.status).toBe(200);
     const body = await parseJsonResponse<{
@@ -317,9 +309,8 @@ describe("GET /api/stocks", () => {
 
   it("L3: カーソルページネーション", async () => {
     // 1ページ目
-    const res1 = await workerFetch("/api/stocks?limit=2", "GET", {
-      headers: authHeaders(USER1),
-    });
+    const req1 = createJsonRequest("/api/stocks?limit=2");
+    const res1 = await handleListStocks(req1, stockEnv(), auth(USER1));
     const page1 = await parseJsonResponse<{
       items: Array<Record<string, unknown>>;
       next_cursor: string;
@@ -330,11 +321,10 @@ describe("GET /api/stocks", () => {
     expect(page1.has_more).toBe(true);
 
     // 2ページ目
-    const res2 = await workerFetch(
+    const req2 = createJsonRequest(
       `/api/stocks?limit=2&cursor=${page1.next_cursor}`,
-      "GET",
-      { headers: authHeaders(USER1) },
     );
+    const res2 = await handleListStocks(req2, stockEnv(), auth(USER1));
     const page2 = await parseJsonResponse<{
       items: Array<Record<string, unknown>>;
       next_cursor: string | null;
@@ -355,9 +345,8 @@ describe("GET /api/stocks", () => {
 
   it("L4: ストック 0 件", async () => {
     // user-2 はストック 0 件
-    const res = await workerFetch("/api/stocks", "GET", {
-      headers: authHeaders(USER2),
-    });
+    const request = createJsonRequest("/api/stocks");
+    const res = await handleListStocks(request, stockEnv(), auth(USER2));
 
     expect(res.status).toBe(200);
     const body = await parseJsonResponse<{
@@ -372,9 +361,8 @@ describe("GET /api/stocks", () => {
   });
 
   it("L5: メモ付きストックは memo_text が結合されている", async () => {
-    const res = await workerFetch("/api/stocks", "GET", {
-      headers: authHeaders(USER1),
-    });
+    const request = createJsonRequest("/api/stocks");
+    const res = await handleListStocks(request, stockEnv(), auth(USER1));
     const body = await parseJsonResponse<{
       items: Array<Record<string, unknown>>;
     }>(res);
@@ -388,9 +376,8 @@ describe("GET /api/stocks", () => {
   });
 
   it("L6: メモなしストックは memo_text が null", async () => {
-    const res = await workerFetch("/api/stocks", "GET", {
-      headers: authHeaders(USER1),
-    });
+    const request = createJsonRequest("/api/stocks");
+    const res = await handleListStocks(request, stockEnv(), auth(USER1));
     const body = await parseJsonResponse<{
       items: Array<Record<string, unknown>>;
     }>(res);
@@ -404,9 +391,8 @@ describe("GET /api/stocks", () => {
   });
 
   it("L7: has_more=false（最終ページ）", async () => {
-    const res = await workerFetch("/api/stocks?limit=100", "GET", {
-      headers: authHeaders(USER1),
-    });
+    const request = createJsonRequest("/api/stocks?limit=100");
+    const res = await handleListStocks(request, stockEnv(), auth(USER1));
     const body = await parseJsonResponse<{
       has_more: boolean;
       next_cursor: string | null;
@@ -419,9 +405,8 @@ describe("GET /api/stocks", () => {
   // --- ユーザー間分離 ---
 
   it("L8: ユーザー A のストックがユーザー B の一覧に含まれない", async () => {
-    const res = await workerFetch("/api/stocks", "GET", {
-      headers: authHeaders(USER2),
-    });
+    const request = createJsonRequest("/api/stocks");
+    const res = await handleListStocks(request, stockEnv(), auth(USER2));
     const body = await parseJsonResponse<{
       items: Array<Record<string, unknown>>;
     }>(res);
@@ -453,9 +438,7 @@ describe("GET /api/stocks/:id", () => {
 
   it("D1: 自分のストック取得（メモ付き）", async () => {
     const stockId = TEST_STOCKS[0].id; // stock-speakerdeck-001
-    const res = await workerFetch(`/api/stocks/${stockId}`, "GET", {
-      headers: authHeaders(USER1),
-    });
+    const res = await handleGetStock(stockId, stockEnv(), auth(USER1));
 
     expect(res.status).toBe(200);
     const body = await parseJsonResponse<Record<string, unknown>>(res);
@@ -466,9 +449,7 @@ describe("GET /api/stocks/:id", () => {
 
   it("D2: メモなしストック取得（memo_text=null）", async () => {
     const stockId = TEST_STOCKS[2].id; // stock-google-slides-001（メモなし）
-    const res = await workerFetch(`/api/stocks/${stockId}`, "GET", {
-      headers: authHeaders(USER1),
-    });
+    const res = await handleGetStock(stockId, stockEnv(), auth(USER1));
 
     expect(res.status).toBe(200);
     const body = await parseJsonResponse<Record<string, unknown>>(res);
@@ -479,10 +460,10 @@ describe("GET /api/stocks/:id", () => {
   // --- 異常系 ---
 
   it("D3: 存在しない ID → 404 NOT_FOUND", async () => {
-    const res = await workerFetch(
-      "/api/stocks/nonexistent-stock-id",
-      "GET",
-      { headers: authHeaders(USER1) },
+    const res = await handleGetStock(
+      "nonexistent-stock-id",
+      stockEnv(),
+      auth(USER1),
     );
 
     expect(res.status).toBe(404);
@@ -492,9 +473,7 @@ describe("GET /api/stocks/:id", () => {
 
   it("D4: 他ユーザーのストック → 404 NOT_FOUND", async () => {
     const stockId = TEST_STOCKS[0].id; // user-1 の stock
-    const res = await workerFetch(`/api/stocks/${stockId}`, "GET", {
-      headers: authHeaders(USER2), // user-2 でアクセス
-    });
+    const res = await handleGetStock(stockId, stockEnv(), auth(USER2));
 
     expect(res.status).toBe(404);
     const body = await parseJsonResponse<{ code: string }>(res);
@@ -518,27 +497,19 @@ describe("DELETE /api/stocks/:id", () => {
 
   it("X1: 自分のストック削除 → 204", async () => {
     const stockId = TEST_STOCKS[2].id; // stock-google-slides-001（メモなし）
-    const res = await workerFetch(`/api/stocks/${stockId}`, "DELETE", {
-      headers: authHeaders(USER1),
-    });
+    const res = await handleDeleteStock(stockId, stockEnv(), auth(USER1));
 
     expect(res.status).toBe(204);
   });
 
   it("X2: メモ付きストック削除 → 204（関連メモも削除）", async () => {
     const stockId = TEST_STOCKS[0].id; // stock-speakerdeck-001（メモあり）
-    const res = await workerFetch(`/api/stocks/${stockId}`, "DELETE", {
-      headers: authHeaders(USER1),
-    });
+    const res = await handleDeleteStock(stockId, stockEnv(), auth(USER1));
 
     expect(res.status).toBe(204);
 
     // メモも削除されていることを確認
-    const memoRes = await workerFetch(
-      `/api/stocks/${stockId}/memo`,
-      "GET",
-      { headers: authHeaders(USER1) },
-    );
+    const memoRes = await handleGetMemo(stockId, stockEnv(), auth(USER1));
     expect(memoRes.status).toBe(404);
   });
 
@@ -546,14 +517,10 @@ describe("DELETE /api/stocks/:id", () => {
     const stockId = TEST_STOCKS[0].id;
 
     // 削除
-    await workerFetch(`/api/stocks/${stockId}`, "DELETE", {
-      headers: authHeaders(USER1),
-    });
+    await handleDeleteStock(stockId, stockEnv(), auth(USER1));
 
     // 取得 → 404
-    const res = await workerFetch(`/api/stocks/${stockId}`, "GET", {
-      headers: authHeaders(USER1),
-    });
+    const res = await handleGetStock(stockId, stockEnv(), auth(USER1));
     expect(res.status).toBe(404);
   });
 
@@ -561,14 +528,11 @@ describe("DELETE /api/stocks/:id", () => {
     const stockId = TEST_STOCKS[0].id;
 
     // 削除
-    await workerFetch(`/api/stocks/${stockId}`, "DELETE", {
-      headers: authHeaders(USER1),
-    });
+    await handleDeleteStock(stockId, stockEnv(), auth(USER1));
 
     // 一覧取得
-    const res = await workerFetch("/api/stocks", "GET", {
-      headers: authHeaders(USER1),
-    });
+    const request = createJsonRequest("/api/stocks");
+    const res = await handleListStocks(request, stockEnv(), auth(USER1));
     const body = await parseJsonResponse<{
       items: Array<Record<string, unknown>>;
     }>(res);
@@ -581,10 +545,10 @@ describe("DELETE /api/stocks/:id", () => {
   // --- 異常系 ---
 
   it("X5: 存在しない ID → 404 NOT_FOUND", async () => {
-    const res = await workerFetch(
-      "/api/stocks/nonexistent-stock-id",
-      "DELETE",
-      { headers: authHeaders(USER1) },
+    const res = await handleDeleteStock(
+      "nonexistent-stock-id",
+      stockEnv(),
+      auth(USER1),
     );
 
     expect(res.status).toBe(404);
@@ -594,9 +558,7 @@ describe("DELETE /api/stocks/:id", () => {
 
   it("X6: 他ユーザーのストック → 404 NOT_FOUND", async () => {
     const stockId = TEST_STOCKS[0].id; // user-1 の stock
-    const res = await workerFetch(`/api/stocks/${stockId}`, "DELETE", {
-      headers: authHeaders(USER2), // user-2 でアクセス
-    });
+    const res = await handleDeleteStock(stockId, stockEnv(), auth(USER2));
 
     expect(res.status).toBe(404);
     const body = await parseJsonResponse<{ code: string }>(res);

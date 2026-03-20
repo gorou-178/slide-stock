@@ -4,11 +4,14 @@
  * URL 登録 → Queue 処理 → メタデータ取得 → 一覧表示の全フローを検証する。
  *
  * テスト戦略:
- * - POST /api/stocks で stock を登録（pending 状態）
+ * - handleCreateStock で stock を登録（pending 状態）
  * - handleQueue を直接呼び出して Queue 処理をシミュレート
- * - GET /api/stocks で ready 状態の stock が取得できることを確認
+ * - handleGetStock / handleListStocks で ready 状態の stock が取得できることを確認
  * - 各プロバイダ（SpeakerDeck, Docswell, Google Slides）で検証
  * - 失敗シナリオ: oEmbed 取得失敗 → stock が failed 状態
+ *
+ * ハンドラー直接呼出方式: workerFetch() (SELF.fetch) を使わず、
+ * ハンドラー関数を直接呼び出す。ルーティング層に依存しない。
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
@@ -16,11 +19,18 @@ import { env } from "cloudflare:test";
 import {
   applyMigrationsAndSeed,
   resetSeedData,
-  workerFetch,
+  createJsonRequest,
   parseJsonResponse,
 } from "../../test/helpers";
+import {
+  handleCreateStock,
+  handleListStocks,
+  handleGetStock,
+  type StockEnv,
+} from "./stocks";
 import { handleQueue, type OEmbedQueueMessage } from "./queue-consumer";
 import { PermanentError } from "../lib/oembed";
+import type { AuthContext } from "../middleware/test-auth-bypass";
 
 // --- Queue 送信のモック（POST /api/stocks 内で呼ばれる） ---
 vi.mock("../lib/queue", () => ({
@@ -51,11 +61,15 @@ const mockGoogleSlides = vi.mocked(fetchGoogleSlidesMetadata);
 
 // --- ヘルパー ---
 
-function authHeaders(userId: string): Record<string, string> {
-  return { "X-Test-User-Id": userId };
+const USER1 = "test-user-1";
+
+function auth(userId: string): AuthContext {
+  return { userId };
 }
 
-const USER1 = "test-user-1";
+function stockEnv(): StockEnv {
+  return { DB: env.DB, OEMBED_QUEUE: env.OEMBED_QUEUE };
+}
 
 function createMockMessage(body: OEmbedQueueMessage) {
   return {
@@ -100,6 +114,14 @@ interface StockListResponse {
   has_more: boolean;
 }
 
+/** stock を作成して ID を返すヘルパー */
+async function createStock(url: string): Promise<StockResponse> {
+  const request = createJsonRequest("/api/stocks", "POST", { url });
+  const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+  expect(res.status).toBe(201);
+  return parseJsonResponse<StockResponse>(res);
+}
+
 // ============================================================
 // 統合テスト: 全フロー検証
 // ============================================================
@@ -120,13 +142,7 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
       const url = "https://speakerdeck.com/integration/test-slide";
 
       // Step 1: URL を POST して stock を登録
-      const createRes = await workerFetch("/api/stocks", "POST", {
-        body: { url },
-        headers: authHeaders(USER1),
-      });
-      expect(createRes.status).toBe(201);
-
-      const created = await parseJsonResponse<StockResponse>(createRes);
+      const created = await createStock(url);
       expect(created.status).toBe("pending");
       expect(created.provider).toBe("speakerdeck");
       expect(created.title).toBeNull();
@@ -156,9 +172,7 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
       expect(msg.ack).toHaveBeenCalled();
 
       // Step 3: GET /api/stocks/:id で ready 状態を確認
-      const detailRes = await workerFetch(`/api/stocks/${stockId}`, "GET", {
-        headers: authHeaders(USER1),
-      });
+      const detailRes = await handleGetStock(stockId, stockEnv(), auth(USER1));
       expect(detailRes.status).toBe(200);
 
       const detail = await parseJsonResponse<StockResponse>(detailRes);
@@ -168,9 +182,12 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
       expect(detail.embed_url).toBe("https://speakerdeck.com/player/int123");
 
       // Step 4: GET /api/stocks の一覧に含まれることを確認
-      const listRes = await workerFetch("/api/stocks", "GET", {
-        headers: authHeaders(USER1),
-      });
+      const listRequest = createJsonRequest("/api/stocks");
+      const listRes = await handleListStocks(
+        listRequest,
+        stockEnv(),
+        auth(USER1),
+      );
       expect(listRes.status).toBe(200);
 
       const list = await parseJsonResponse<StockListResponse>(listRes);
@@ -188,13 +205,7 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
       const url = "https://www.docswell.com/s/integration/INT001";
 
       // Step 1: 登録
-      const createRes = await workerFetch("/api/stocks", "POST", {
-        body: { url },
-        headers: authHeaders(USER1),
-      });
-      expect(createRes.status).toBe(201);
-
-      const created = await parseJsonResponse<StockResponse>(createRes);
+      const created = await createStock(url);
       expect(created.status).toBe("pending");
       expect(created.provider).toBe("docswell");
 
@@ -219,9 +230,7 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
       expect(msg.ack).toHaveBeenCalled();
 
       // Step 3: 詳細取得で確認
-      const detailRes = await workerFetch(`/api/stocks/${stockId}`, "GET", {
-        headers: authHeaders(USER1),
-      });
+      const detailRes = await handleGetStock(stockId, stockEnv(), auth(USER1));
       const detail = await parseJsonResponse<StockResponse>(detailRes);
       expect(detail.status).toBe("ready");
       expect(detail.title).toBe("Docswell Integration Slide");
@@ -235,16 +244,11 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
 
   describe("Google Slides フルフロー", () => {
     it("URL 登録 → Queue 処理 → ready 状態で一覧取得", async () => {
-      const url = "https://docs.google.com/presentation/d/1ABCDEFGHIJKLMNOPQRSTUVWXYZintegration/edit";
+      const url =
+        "https://docs.google.com/presentation/d/1ABCDEFGHIJKLMNOPQRSTUVWXYZintegration/edit";
 
       // Step 1: 登録
-      const createRes = await workerFetch("/api/stocks", "POST", {
-        body: { url },
-        headers: authHeaders(USER1),
-      });
-      expect(createRes.status).toBe(201);
-
-      const created = await parseJsonResponse<StockResponse>(createRes);
+      const created = await createStock(url);
       expect(created.status).toBe("pending");
       expect(created.provider).toBe("google_slides");
       expect(created.canonical_url).toBe(
@@ -258,7 +262,8 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
         title: "Google Integration Presentation",
         authorName: null,
         thumbnailUrl: null,
-        embedUrl: "https://docs.google.com/presentation/d/1ABCDEFGHIJKLMNOPQRSTUVWXYZintegration/embed",
+        embedUrl:
+          "https://docs.google.com/presentation/d/1ABCDEFGHIJKLMNOPQRSTUVWXYZintegration/embed",
       });
 
       const msg = createMockMessage({
@@ -272,9 +277,7 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
       expect(msg.ack).toHaveBeenCalled();
 
       // Step 3: 確認
-      const detailRes = await workerFetch(`/api/stocks/${stockId}`, "GET", {
-        headers: authHeaders(USER1),
-      });
+      const detailRes = await handleGetStock(stockId, stockEnv(), auth(USER1));
       const detail = await parseJsonResponse<StockResponse>(detailRes);
       expect(detail.status).toBe("ready");
       expect(detail.title).toBe("Google Integration Presentation");
@@ -291,18 +294,14 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
       const url = "https://speakerdeck.com/integration/deleted-slide";
 
       // Step 1: 登録
-      const createRes = await workerFetch("/api/stocks", "POST", {
-        body: { url },
-        headers: authHeaders(USER1),
-      });
-      expect(createRes.status).toBe(201);
-
-      const created = await parseJsonResponse<StockResponse>(createRes);
+      const created = await createStock(url);
       const stockId = created.id;
 
       // Step 2: Queue 処理（恒久的エラー）
       mockSpeakerDeck.mockRejectedValueOnce(
-        new PermanentError("SpeakerDeck oEmbed returned 404: slide not found"),
+        new PermanentError(
+          "SpeakerDeck oEmbed returned 404: slide not found",
+        ),
       );
 
       const msg = createMockMessage({
@@ -316,9 +315,7 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
       expect(msg.ack).toHaveBeenCalled(); // PermanentError は ack
 
       // Step 3: stock が failed 状態であることを確認
-      const detailRes = await workerFetch(`/api/stocks/${stockId}`, "GET", {
-        headers: authHeaders(USER1),
-      });
+      const detailRes = await handleGetStock(stockId, stockEnv(), auth(USER1));
       const detail = await parseJsonResponse<StockResponse>(detailRes);
       expect(detail.status).toBe("failed");
       expect(detail.title).toBeNull();
@@ -329,13 +326,7 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
       const url = "https://speakerdeck.com/integration/retry-slide";
 
       // Step 1: 登録
-      const createRes = await workerFetch("/api/stocks", "POST", {
-        body: { url },
-        headers: authHeaders(USER1),
-      });
-      expect(createRes.status).toBe(201);
-
-      const created = await parseJsonResponse<StockResponse>(createRes);
+      const created = await createStock(url);
       const stockId = created.id;
 
       // Step 2: Queue 処理（一時的エラー）
@@ -352,9 +343,7 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
       expect(msg.retry).toHaveBeenCalled(); // 一時的エラーは retry
 
       // Step 3: stock は pending のまま
-      const detailRes = await workerFetch(`/api/stocks/${stockId}`, "GET", {
-        headers: authHeaders(USER1),
-      });
+      const detailRes = await handleGetStock(stockId, stockEnv(), auth(USER1));
       const detail = await parseJsonResponse<StockResponse>(detailRes);
       expect(detail.status).toBe("pending");
     });
@@ -374,13 +363,8 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
 
       // Step 1: 3 件登録
       for (const url of urls) {
-        const res = await workerFetch("/api/stocks", "POST", {
-          body: { url },
-          headers: authHeaders(USER1),
-        });
-        expect(res.status).toBe(201);
-        const body = await parseJsonResponse<StockResponse>(res);
-        stockIds.push(body.id);
+        const created = await createStock(url);
+        stockIds.push(created.id);
       }
 
       // Step 2: Queue 処理
@@ -400,7 +384,8 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
         title: "Multi Slide 3",
         authorName: null,
         thumbnailUrl: null,
-        embedUrl: "https://docs.google.com/presentation/d/1multi3ABCDEFGHIJKLMNOPQRSTUVWXYZtest/embed",
+        embedUrl:
+          "https://docs.google.com/presentation/d/1multi3ABCDEFGHIJKLMNOPQRSTUVWXYZtest/embed",
       });
 
       const messages = [
@@ -422,7 +407,8 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
           schemaVersion: 1,
           stockId: stockIds[2],
           originalUrl: urls[2],
-          canonicalUrl: "https://docs.google.com/presentation/d/1multi3ABCDEFGHIJKLMNOPQRSTUVWXYZtest",
+          canonicalUrl:
+            "https://docs.google.com/presentation/d/1multi3ABCDEFGHIJKLMNOPQRSTUVWXYZtest",
           provider: "google_slides",
         }),
       ];
@@ -435,9 +421,12 @@ describe("統合テスト: URL 登録 → Queue 処理 → 一覧表示", () => 
 
       // Step 3: 一覧取得で 3 件が ready であることを確認
       // （シードデータの 3 件 + 新規 3 件 = 合計 6 件）
-      const listRes = await workerFetch("/api/stocks", "GET", {
-        headers: authHeaders(USER1),
-      });
+      const listRequest = createJsonRequest("/api/stocks");
+      const listRes = await handleListStocks(
+        listRequest,
+        stockEnv(),
+        auth(USER1),
+      );
       const list = await parseJsonResponse<StockListResponse>(listRes);
 
       for (const stockId of stockIds) {

@@ -12,17 +12,20 @@
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import { env } from "cloudflare:test";
 import { testAuthBypass } from "./middleware/test-auth-bypass";
 import { fetchDocswellMetadata, PermanentError } from "./lib/oembed";
 import { handleLogin, handleCallback, handleLogout, type AuthEnv, type AuthDeps } from "./handlers/auth";
 import {
   applyMigrationsAndSeed,
   resetSeedData,
-  workerFetch,
+  createJsonRequest,
   parseJsonResponse,
   TEST_USERS,
 } from "../test/helpers";
+import { handleCreateStock, type StockEnv } from "./handlers/stocks";
 import { sendOEmbedMessage } from "./lib/queue";
+import type { AuthContext } from "./middleware/test-auth-bypass";
 
 // Queue スタブ
 vi.mock("./lib/queue", () => ({
@@ -285,29 +288,23 @@ describe("T-604: セキュリティレスポンスヘッダー仕様確認", () 
 // ============================================================
 // T-605: Worker グローバル try/catch
 // ============================================================
-describe("T-605: Worker グローバル try/catch", () => {
-  beforeAll(async () => {
-    await applyMigrationsAndSeed();
-  });
-
-  it("未知のルートは 404 を返す（クラッシュしない）", async () => {
-    const res = await workerFetch("/api/unknown-route");
-    expect(res.status).toBe(404);
-  });
-
-  it("ヘルスチェックが正常に動作する", async () => {
-    const res = await workerFetch("/api/health");
-    expect(res.status).toBe(200);
-    const body = await parseJsonResponse<{ status: string }>(res);
-    expect(body.status).toBe("ok");
-  });
-});
+// NOTE: 未知のルートの 404 とヘルスチェックはルーティング層のテスト。
+// SSR 移行後は Astro が処理するため、E2E テストと health.test.ts でカバー。
+// ここでは test/worker/health.test.ts に委譲する。
 
 // ============================================================
 // T-606: stocks テーブル UNIQUE INDEX による重複防止
 // ============================================================
 describe("T-606: UNIQUE INDEX による重複防止", () => {
-  const USER1 = TEST_USERS[0].id;
+  const USER1_ID = TEST_USERS[0].id;
+
+  function auth(userId: string): AuthContext {
+    return { userId };
+  }
+
+  function stockEnv(): StockEnv {
+    return { DB: env.DB, OEMBED_QUEUE: env.OEMBED_QUEUE };
+  }
 
   beforeAll(async () => {
     await applyMigrationsAndSeed();
@@ -321,10 +318,10 @@ describe("T-606: UNIQUE INDEX による重複防止", () => {
   it("同一ユーザーが同一 URL を登録すると 409 DUPLICATE_STOCK", async () => {
     // シードデータに存在する SpeakerDeck URL
     const existingUrl = "https://speakerdeck.com/testuser/example-slide";
-    const res = await workerFetch("/api/stocks", "POST", {
-      body: { url: existingUrl },
-      headers: { "X-Test-User-Id": USER1 },
+    const request = createJsonRequest("/api/stocks", "POST", {
+      url: existingUrl,
     });
+    const res = await handleCreateStock(request, stockEnv(), auth(USER1_ID));
 
     expect(res.status).toBe(409);
     const body = await parseJsonResponse<{ code: string }>(res);
@@ -335,10 +332,8 @@ describe("T-606: UNIQUE INDEX による重複防止", () => {
     const USER2 = TEST_USERS[1].id;
     // USER1 のシードデータに存在する URL を USER2 で登録
     const url = "https://speakerdeck.com/testuser/example-slide";
-    const res = await workerFetch("/api/stocks", "POST", {
-      body: { url },
-      headers: { "X-Test-User-Id": USER2 },
-    });
+    const request = createJsonRequest("/api/stocks", "POST", { url });
+    const res = await handleCreateStock(request, stockEnv(), auth(USER2));
 
     expect(res.status).toBe(201);
   });

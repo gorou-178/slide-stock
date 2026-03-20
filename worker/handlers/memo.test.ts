@@ -7,25 +7,33 @@
  * - PUT /api/stocks/:id/memo: メモ作成・更新（upsert）、バリデーション
  * - GET /api/stocks/:id/memo: メモ取得、stock 不存在 / メモ未作成の区別
  * - Stock API との連携: メモ反映、stock 削除時のメモ連動削除
+ *
+ * ハンドラー直接呼出方式: workerFetch() (SELF.fetch) を使わず、
+ * ハンドラー関数を直接呼び出す。ルーティング層に依存しない。
  */
 
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { env } from "cloudflare:test";
 import {
   applyMigrationsAndSeed,
   resetSeedData,
-  workerFetch,
+  createJsonRequest,
+  createRawRequest,
   parseJsonResponse,
   TEST_USERS,
   TEST_STOCKS,
   TEST_MEMOS,
 } from "../../test/helpers";
-import { SELF } from "cloudflare:test";
+import { handlePutMemo, handleGetMemo, type MemoEnv } from "./memo";
+import {
+  handleGetStock,
+  handleListStocks,
+  handleDeleteStock,
+  type StockEnv,
+} from "./stocks";
+import type { AuthContext } from "../middleware/test-auth-bypass";
 
 // --- テスト用ヘルパー ---
-
-function authHeaders(userId: string): Record<string, string> {
-  return { "X-Test-User-Id": userId };
-}
 
 const USER1 = TEST_USERS[0].id; // test-user-1
 const USER2 = TEST_USERS[1].id; // test-user-2
@@ -34,6 +42,18 @@ const USER2 = TEST_USERS[1].id; // test-user-2
 const STOCK_WITH_MEMO = TEST_STOCKS[0].id; // stock-speakerdeck-001
 // メモなし stock
 const STOCK_WITHOUT_MEMO = TEST_STOCKS[2].id; // stock-google-slides-001
+
+function auth(userId: string): AuthContext {
+  return { userId };
+}
+
+function memoEnv(): MemoEnv {
+  return { DB: env.DB };
+}
+
+function stockEnv(): StockEnv {
+  return { DB: env.DB, OEMBED_QUEUE: env.OEMBED_QUEUE };
+}
 
 // ============================================================
 // PUT /api/stocks/:id/memo
@@ -51,13 +71,16 @@ describe("PUT /api/stocks/:id/memo", () => {
 
   describe("正常系", () => {
     it("M1: 新規メモ作成（200）", async () => {
-      const res = await workerFetch(
+      const request = createJsonRequest(
         `/api/stocks/${STOCK_WITHOUT_MEMO}/memo`,
         "PUT",
-        {
-          body: { memo_text: "良いスライド" },
-          headers: authHeaders(USER1),
-        },
+        { memo_text: "良いスライド" },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITHOUT_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
       );
 
       expect(res.status).toBe(200);
@@ -71,23 +94,21 @@ describe("PUT /api/stocks/:id/memo", () => {
 
     it("M2: メモ更新（既存メモあり、updated_at が更新される）", async () => {
       // 既存メモを取得して created_at を記録
-      const getRes = await workerFetch(
-        `/api/stocks/${STOCK_WITH_MEMO}/memo`,
-        "GET",
-        { headers: authHeaders(USER1) },
-      );
       const existing = await parseJsonResponse<Record<string, unknown>>(
-        getRes,
+        await handleGetMemo(STOCK_WITH_MEMO, memoEnv(), auth(USER1)),
       );
 
       // 更新
-      const res = await workerFetch(
+      const request = createJsonRequest(
         `/api/stocks/${STOCK_WITH_MEMO}/memo`,
         "PUT",
-        {
-          body: { memo_text: "更新したメモ" },
-          headers: authHeaders(USER1),
-        },
+        { memo_text: "更新したメモ" },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITH_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
       );
 
       expect(res.status).toBe(200);
@@ -101,13 +122,16 @@ describe("PUT /api/stocks/:id/memo", () => {
 
     it("M3: 最大文字数ぴったり（10,000文字）", async () => {
       const longText = "あ".repeat(10000);
-      const res = await workerFetch(
+      const request = createJsonRequest(
         `/api/stocks/${STOCK_WITHOUT_MEMO}/memo`,
         "PUT",
-        {
-          body: { memo_text: longText },
-          headers: authHeaders(USER1),
-        },
+        { memo_text: longText },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITHOUT_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
       );
 
       expect(res.status).toBe(200);
@@ -117,13 +141,16 @@ describe("PUT /api/stocks/:id/memo", () => {
 
     it("M4: マルチバイト文字を含むメモ", async () => {
       const text = "日本語のメモ🎉";
-      const res = await workerFetch(
+      const request = createJsonRequest(
         `/api/stocks/${STOCK_WITHOUT_MEMO}/memo`,
         "PUT",
-        {
-          body: { memo_text: text },
-          headers: authHeaders(USER1),
-        },
+        { memo_text: text },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITHOUT_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
       );
 
       expect(res.status).toBe(200);
@@ -136,13 +163,16 @@ describe("PUT /api/stocks/:id/memo", () => {
 
   describe("異常系", () => {
     it("M5: memo_text 未指定 → 400 INVALID_REQUEST", async () => {
-      const res = await workerFetch(
+      const request = createJsonRequest(
         `/api/stocks/${STOCK_WITH_MEMO}/memo`,
         "PUT",
-        {
-          body: {},
-          headers: authHeaders(USER1),
-        },
+        {},
+      );
+      const res = await handlePutMemo(
+        STOCK_WITH_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
       );
 
       expect(res.status).toBe(400);
@@ -151,13 +181,16 @@ describe("PUT /api/stocks/:id/memo", () => {
     });
 
     it("M6: memo_text が空文字列 → 400 INVALID_REQUEST", async () => {
-      const res = await workerFetch(
+      const request = createJsonRequest(
         `/api/stocks/${STOCK_WITH_MEMO}/memo`,
         "PUT",
-        {
-          body: { memo_text: "" },
-          headers: authHeaders(USER1),
-        },
+        { memo_text: "" },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITH_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
       );
 
       expect(res.status).toBe(400);
@@ -166,13 +199,16 @@ describe("PUT /api/stocks/:id/memo", () => {
     });
 
     it("M7: memo_text が空白のみ → 400 INVALID_REQUEST", async () => {
-      const res = await workerFetch(
+      const request = createJsonRequest(
         `/api/stocks/${STOCK_WITH_MEMO}/memo`,
         "PUT",
-        {
-          body: { memo_text: "   " },
-          headers: authHeaders(USER1),
-        },
+        { memo_text: "   " },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITH_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
       );
 
       expect(res.status).toBe(400);
@@ -182,13 +218,16 @@ describe("PUT /api/stocks/:id/memo", () => {
 
     it("M8: memo_text が 10,001 文字 → 400 MEMO_TOO_LONG", async () => {
       const longText = "あ".repeat(10001);
-      const res = await workerFetch(
+      const request = createJsonRequest(
         `/api/stocks/${STOCK_WITH_MEMO}/memo`,
         "PUT",
-        {
-          body: { memo_text: longText },
-          headers: authHeaders(USER1),
-        },
+        { memo_text: longText },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITH_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
       );
 
       expect(res.status).toBe(400);
@@ -197,13 +236,16 @@ describe("PUT /api/stocks/:id/memo", () => {
     });
 
     it("M9: memo_text が string でない → 400 INVALID_REQUEST", async () => {
-      const res = await workerFetch(
+      const request = createJsonRequest(
         `/api/stocks/${STOCK_WITH_MEMO}/memo`,
         "PUT",
-        {
-          body: { memo_text: 123 },
-          headers: authHeaders(USER1),
-        },
+        { memo_text: 123 },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITH_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
       );
 
       expect(res.status).toBe(400);
@@ -212,16 +254,16 @@ describe("PUT /api/stocks/:id/memo", () => {
     });
 
     it("M10: JSON パースエラー → 400 INVALID_REQUEST", async () => {
-      const res = await SELF.fetch(
-        `http://localhost/api/stocks/${STOCK_WITH_MEMO}/memo`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Test-User-Id": USER1,
-          },
-          body: "invalid-json{{{",
-        },
+      const request = createRawRequest(
+        `/api/stocks/${STOCK_WITH_MEMO}/memo`,
+        "PUT",
+        "invalid-json{{{",
+      );
+      const res = await handlePutMemo(
+        STOCK_WITH_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
       );
 
       expect(res.status).toBe(400);
@@ -230,13 +272,16 @@ describe("PUT /api/stocks/:id/memo", () => {
     });
 
     it("M11: stock が存在しない → 404 NOT_FOUND", async () => {
-      const res = await workerFetch(
+      const request = createJsonRequest(
         "/api/stocks/nonexistent-stock-id/memo",
         "PUT",
-        {
-          body: { memo_text: "テスト" },
-          headers: authHeaders(USER1),
-        },
+        { memo_text: "テスト" },
+      );
+      const res = await handlePutMemo(
+        "nonexistent-stock-id",
+        request,
+        memoEnv(),
+        auth(USER1),
       );
 
       expect(res.status).toBe(404);
@@ -249,13 +294,16 @@ describe("PUT /api/stocks/:id/memo", () => {
     });
 
     it("M12: 他ユーザーの stock → 404 NOT_FOUND", async () => {
-      const res = await workerFetch(
+      const request = createJsonRequest(
         `/api/stocks/${STOCK_WITH_MEMO}/memo`,
         "PUT",
-        {
-          body: { memo_text: "テスト" },
-          headers: authHeaders(USER2), // user-2 でアクセス
-        },
+        { memo_text: "テスト" },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITH_MEMO,
+        request,
+        memoEnv(),
+        auth(USER2),
       );
 
       expect(res.status).toBe(404);
@@ -280,11 +328,7 @@ describe("GET /api/stocks/:id/memo", () => {
   // --- 正常系 ---
 
   it("G1: メモが存在する stock → 200 memo オブジェクト", async () => {
-    const res = await workerFetch(
-      `/api/stocks/${STOCK_WITH_MEMO}/memo`,
-      "GET",
-      { headers: authHeaders(USER1) },
-    );
+    const res = await handleGetMemo(STOCK_WITH_MEMO, memoEnv(), auth(USER1));
 
     expect(res.status).toBe(200);
     const body = await parseJsonResponse<Record<string, unknown>>(res);
@@ -298,10 +342,10 @@ describe("GET /api/stocks/:id/memo", () => {
   // --- 異常系 ---
 
   it("G2: メモが未作成の stock → 404 NOT_FOUND（メモが見つかりません）", async () => {
-    const res = await workerFetch(
-      `/api/stocks/${STOCK_WITHOUT_MEMO}/memo`,
-      "GET",
-      { headers: authHeaders(USER1) },
+    const res = await handleGetMemo(
+      STOCK_WITHOUT_MEMO,
+      memoEnv(),
+      auth(USER1),
     );
 
     expect(res.status).toBe(404);
@@ -314,10 +358,10 @@ describe("GET /api/stocks/:id/memo", () => {
   });
 
   it("G3: stock が存在しない → 404 NOT_FOUND（ストックが見つかりません）", async () => {
-    const res = await workerFetch(
-      "/api/stocks/nonexistent-stock-id/memo",
-      "GET",
-      { headers: authHeaders(USER1) },
+    const res = await handleGetMemo(
+      "nonexistent-stock-id",
+      memoEnv(),
+      auth(USER1),
     );
 
     expect(res.status).toBe(404);
@@ -330,11 +374,7 @@ describe("GET /api/stocks/:id/memo", () => {
   });
 
   it("G4: 他ユーザーの stock → 404 NOT_FOUND（ストックが見つかりません）", async () => {
-    const res = await workerFetch(
-      `/api/stocks/${STOCK_WITH_MEMO}/memo`,
-      "GET",
-      { headers: authHeaders(USER2) },
-    );
+    const res = await handleGetMemo(STOCK_WITH_MEMO, memoEnv(), auth(USER2));
 
     expect(res.status).toBe(404);
     const body = await parseJsonResponse<{
@@ -362,16 +402,18 @@ describe("Memo - Stock API 連携", () => {
     const memoText = "連携テストメモ";
 
     // メモ作成
-    await workerFetch(`/api/stocks/${STOCK_WITHOUT_MEMO}/memo`, "PUT", {
-      body: { memo_text: memoText },
-      headers: authHeaders(USER1),
-    });
+    const putRequest = createJsonRequest(
+      `/api/stocks/${STOCK_WITHOUT_MEMO}/memo`,
+      "PUT",
+      { memo_text: memoText },
+    );
+    await handlePutMemo(STOCK_WITHOUT_MEMO, putRequest, memoEnv(), auth(USER1));
 
     // stock 詳細取得
-    const res = await workerFetch(
-      `/api/stocks/${STOCK_WITHOUT_MEMO}`,
-      "GET",
-      { headers: authHeaders(USER1) },
+    const res = await handleGetStock(
+      STOCK_WITHOUT_MEMO,
+      stockEnv(),
+      auth(USER1),
     );
 
     const body = await parseJsonResponse<Record<string, unknown>>(res);
@@ -382,15 +424,16 @@ describe("Memo - Stock API 連携", () => {
     const updatedMemo = "一覧連携テスト";
 
     // メモ更新
-    await workerFetch(`/api/stocks/${STOCK_WITH_MEMO}/memo`, "PUT", {
-      body: { memo_text: updatedMemo },
-      headers: authHeaders(USER1),
-    });
+    const putRequest = createJsonRequest(
+      `/api/stocks/${STOCK_WITH_MEMO}/memo`,
+      "PUT",
+      { memo_text: updatedMemo },
+    );
+    await handlePutMemo(STOCK_WITH_MEMO, putRequest, memoEnv(), auth(USER1));
 
     // 一覧取得
-    const res = await workerFetch("/api/stocks", "GET", {
-      headers: authHeaders(USER1),
-    });
+    const listRequest = createJsonRequest("/api/stocks");
+    const res = await handleListStocks(listRequest, stockEnv(), auth(USER1));
     const body = await parseJsonResponse<{
       items: Array<Record<string, unknown>>;
     }>(res);
@@ -402,16 +445,10 @@ describe("Memo - Stock API 連携", () => {
 
   it("I3: DELETE /api/stocks/:id で stock 削除後、memo GET が 404 を返す", async () => {
     // stock 削除
-    await workerFetch(`/api/stocks/${STOCK_WITH_MEMO}`, "DELETE", {
-      headers: authHeaders(USER1),
-    });
+    await handleDeleteStock(STOCK_WITH_MEMO, stockEnv(), auth(USER1));
 
     // メモ取得 → stock 不存在の 404
-    const res = await workerFetch(
-      `/api/stocks/${STOCK_WITH_MEMO}/memo`,
-      "GET",
-      { headers: authHeaders(USER1) },
-    );
+    const res = await handleGetMemo(STOCK_WITH_MEMO, memoEnv(), auth(USER1));
 
     expect(res.status).toBe(404);
     const body = await parseJsonResponse<{
