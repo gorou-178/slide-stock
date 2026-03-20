@@ -1,11 +1,11 @@
-name = "slide-stock-api"
+name = "slide-stock-queue-worker"
 main = "worker/index.ts"
 compatibility_date = "2025-02-14"
 compatibility_flags = ["nodejs_compat"]
 
-# --- ルーティング ---
-# gorou.dev が Cloudflare ゾーンでないため Worker routes は使用不可。
-# 代わりに Pages の _redirects で /api/* を workers.dev へプロキシする。
+# --- Queue consumer 専用 Worker ---
+# HTTP ルーティングは Astro SSR (Pages) が担当。
+# この Worker は Queue consumer のみ。T-710/T-711 で廃止予定。
 
 # --- 環境変数 ---
 [vars]
