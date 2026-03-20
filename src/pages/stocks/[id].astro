@@ -1,7 +1,7 @@
 ---
-export const prerender = true;
-import BaseLayout from '../layouts/BaseLayout.astro';
-import MemoEditor from '../components/MemoEditor.astro';
+export const prerender = false;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import MemoEditor from '../../components/MemoEditor.astro';
 ---
 
 <BaseLayout title="ストック詳細">
@@ -49,7 +49,7 @@ import MemoEditor from '../components/MemoEditor.astro';
 </BaseLayout>
 
 <script>
-  import { fetchMe, fetchStock, saveMemo, deleteStock, ApiError } from '../lib/api-client';
+  import { fetchMe, fetchStock, saveMemo, deleteStock, ApiError } from '../../lib/api-client';
 
   const PROVIDER_LABELS: Record<string, string> = {
     speakerdeck: 'SpeakerDeck',
