@@ -222,19 +222,69 @@ export const prerender = true;
 
 SSR モードでも静的に配信され、パフォーマンスに影響なし。
 
-### 10. 移行チェックリスト（T-701 の作業項目）
+### 10. 検証戦略（振る舞い保証）
 
-1. [ ] `@astrojs/cloudflare` をインストール
-2. [ ] `astro.config.mjs` を SSR モードに変更（dev proxy・rewrite middleware 削除）
-3. [ ] `src/pages/api/` に Astro API Routes を作成（既存ハンドラーの薄いラッパー）
-4. [ ] `resolveAuth()` を共有ユーティリティとして抽出（`worker/index.ts` からの依存を解消）
-5. [ ] ランディングページ・404・エラーページに `prerender = true` を設定
-6. [ ] `wrangler.toml` を簡素化（`main` 削除、`name` 変更）
-7. [ ] `worker/index.ts` を削除
-8. [ ] `functions/` ディレクトリを削除
-9. [ ] `public/_redirects` を削除
-10. [ ] `package.json` スクリプトを統合
-11. [ ] WORKER_ORIGIN 環境変数を Cloudflare ダッシュボードから削除（デプロイ後）
+DDD のインフラ層差し替えと同様に、**ドメイン層（handlers/lib/middleware）は変更せず、インフラ層（ルーティング）のみ差し替える**。各フェーズでテストがグリーンの状態を維持する。
+
+#### テスト分類と移行影響
+
+| 分類 | テスト | 件数 | 移行影響 |
+|------|--------|------|----------|
+| **変更不要** | `provider.test.ts` | 43 | 純粋関数。フレームワーク非依存 |
+| **変更不要** | `oembed.test.ts` | 16 | fetch API のみ使用 |
+| **変更不要** | `queue-consumer.test.ts` | 13 | `handleQueue()` 直接呼出 |
+| **変更不要** | `integration.test.ts` | 9 | ハンドラー間データフロー検証 |
+| **変更不要** | E2E 3ファイル | 26 | Astro dev server 前提で記述済み |
+| **要リファクタ** | ハンドラーテスト 3ファイル | ~60 | `workerFetch()` → ハンドラー直接呼出に変更 |
+
+#### 課題: `workerFetch()` の依存
+
+現在のハンドラーテスト（`auth.test.ts`, `stocks.test.ts`, `memo.test.ts`）は `workerFetch()` ヘルパー（`test/helpers/request.ts`）を使用している。これは `@cloudflare/vitest-pool-workers` の `SELF.fetch()` で `worker/index.ts` のルーティングを経由するため、`worker/index.ts` 削除後に動作しなくなる。
+
+**対策**: `workerFetch()` を廃止し、ハンドラー関数を直接呼び出すテストに書き換える。テストケース（入力・期待出力）はすべて維持する。
+
+#### フェーズ別の検証ポイント
+
+| フェーズ | 作業 | 検証 |
+|---------|------|------|
+| **Phase 1** | `workerFetch()` → ハンドラー直接呼出に書き換え | 全ユニットテスト GREEN |
+| **Phase 2** | `@astrojs/cloudflare` 導入、`astro.config.mjs` 変更 | ビルド成功 |
+| **Phase 3** | `src/pages/api/` に API Routes 作成 | ビルド成功 + `astro dev` 起動確認 |
+| **Phase 4** | `worker/index.ts`, `functions/`, `public/_redirects` 削除 | 全ユニットテスト GREEN |
+| **Phase 5** | `package.json` スクリプト統合、`wrangler.toml` 簡素化 | ビルド成功 |
+| **Phase 6** | E2E テスト実行 | 全 E2E テスト GREEN |
+
+### 11. 移行チェックリスト（T-701 の作業項目）
+
+**Phase 1: テスト基盤の安全化（ルーティング依存を除去）**
+1. [ ] `resolveAuth()` と `unauthorized()` を `worker/index.ts` から共有モジュールに抽出
+2. [ ] ハンドラーテストを `workerFetch()` → ハンドラー直接呼出に書き換え
+3. [ ] 全ユニットテスト GREEN を確認 → commit
+
+**Phase 2: Astro SSR 基盤構築**
+4. [ ] `@astrojs/cloudflare` をインストール
+5. [ ] `astro.config.mjs` を SSR モードに変更（dev proxy・rewrite middleware 削除）
+6. [ ] ビルド成功を確認 → commit
+
+**Phase 3: API Routes 作成**
+7. [ ] `src/pages/api/` に Astro API Routes を作成（既存ハンドラーの薄いラッパー）
+8. [ ] ランディングページ・404・エラーページに `prerender = true` を設定
+9. [ ] ビルド成功 + 全ユニットテスト GREEN → commit
+
+**Phase 4: 旧インフラ層の削除**
+10. [ ] `worker/index.ts` を削除
+11. [ ] `functions/` ディレクトリを削除
+12. [ ] `public/_redirects` を削除
+13. [ ] 全ユニットテスト GREEN → commit
+
+**Phase 5: 構成の統合**
+14. [ ] `wrangler.toml` を簡素化
+15. [ ] `package.json` スクリプトを統合
+16. [ ] ビルド成功 → commit
+
+**Phase 6: E2E 検証**
+17. [ ] E2E テスト実行、全 GREEN を確認
+18. [ ] WORKER_ORIGIN 環境変数を Cloudflare ダッシュボードから削除（デプロイ後）
 
 ## リスクと緩和策
 
