@@ -79,11 +79,11 @@ import MemoEditor from '../components/MemoEditor.astro';
 
   function updateCharCount() {
     const count = memoTextarea.value.length;
-    memoCharCount.textContent = `${count.toLocaleString()} / 10,000`;
+    memoCharCount.textContent = `${count.toLocaleString()} / 200`;
     memoCharCount.className = 'char-count';
-    if (count > 10000) {
+    if (count > 200) {
       memoCharCount.classList.add('error');
-    } else if (count > 9500) {
+    } else if (count > 190) {
       memoCharCount.classList.add('warning');
     }
   }

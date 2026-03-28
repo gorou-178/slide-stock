@@ -120,8 +120,8 @@ describe("PUT /api/stocks/:id/memo", () => {
       expect(body.id).toBe(existing.id);
     });
 
-    it("M3: 最大文字数ぴったり（10,000文字）", async () => {
-      const longText = "あ".repeat(10000);
+    it("M3: 最大文字数ぴったり（200文字）", async () => {
+      const longText = "あ".repeat(200);
       const request = createJsonRequest(
         `/api/stocks/${STOCK_WITHOUT_MEMO}/memo`,
         "PUT",
@@ -137,6 +137,42 @@ describe("PUT /api/stocks/:id/memo", () => {
       expect(res.status).toBe(200);
       const body = await parseJsonResponse<Record<string, unknown>>(res);
       expect(body.memo_text).toBe(longText);
+    });
+
+    it("M_trim: 前後空白がトリムされてDBに保存される", async () => {
+      const request = createJsonRequest(
+        `/api/stocks/${STOCK_WITHOUT_MEMO}/memo`,
+        "PUT",
+        { memo_text: "  メモ内容  " },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITHOUT_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
+      );
+
+      expect(res.status).toBe(200);
+      const body = await parseJsonResponse<Record<string, unknown>>(res);
+      expect(body.memo_text).toBe("メモ内容");
+    });
+
+    it("M_crlf: CRLF/CRがLFに正規化されてDBに保存される", async () => {
+      const request = createJsonRequest(
+        `/api/stocks/${STOCK_WITHOUT_MEMO}/memo`,
+        "PUT",
+        { memo_text: "1行目\r\n2行目\r3行目" },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITHOUT_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
+      );
+
+      expect(res.status).toBe(200);
+      const body = await parseJsonResponse<Record<string, unknown>>(res);
+      expect(body.memo_text).toBe("1行目\n2行目\n3行目");
     });
 
     it("M4: マルチバイト文字を含むメモ", async () => {
@@ -216,8 +252,8 @@ describe("PUT /api/stocks/:id/memo", () => {
       expect(body.code).toBe("INVALID_REQUEST");
     });
 
-    it("M8: memo_text が 10,001 文字 → 400 MEMO_TOO_LONG", async () => {
-      const longText = "あ".repeat(10001);
+    it("M8: memo_text が 201 文字 → 400 MEMO_TOO_LONG", async () => {
+      const longText = "あ".repeat(201);
       const request = createJsonRequest(
         `/api/stocks/${STOCK_WITH_MEMO}/memo`,
         "PUT",

@@ -9,7 +9,15 @@ export interface MemoEnv {
   DB: D1Database;
 }
 
-const MEMO_MAX_LENGTH = 10000;
+const MEMO_MAX_LENGTH = 200;
+
+type MemoRecord = {
+  id: string;
+  stock_id: string;
+  memo_text: string;
+  created_at: string;
+  updated_at: string;
+};
 
 function jsonError(
   error: string,
@@ -29,7 +37,6 @@ export async function handlePutMemo(
   env: MemoEnv,
   auth: AuthContext,
 ): Promise<Response> {
-  // 1. JSON パース
   let body: unknown;
   try {
     body = await request.json();
@@ -41,7 +48,6 @@ export async function handlePutMemo(
     );
   }
 
-  // 2. memo_text バリデーション
   if (
     !body ||
     typeof body !== "object" ||
@@ -55,19 +61,21 @@ export async function handlePutMemo(
     return jsonError("memo_text は必須です", "INVALID_REQUEST", 400);
   }
 
-  if (memoText.trim() === "") {
+  const trimmed = memoText.trim();
+  const normalized = trimmed.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  if (normalized === "") {
     return jsonError("メモの内容が空です", "INVALID_REQUEST", 400);
   }
 
-  if ([...memoText].length > MEMO_MAX_LENGTH) {
+  if ([...normalized].length > MEMO_MAX_LENGTH) {
     return jsonError(
-      "メモは10,000文字以内で入力してください",
+      `メモは${MEMO_MAX_LENGTH}文字以内で入力してください`,
       "MEMO_TOO_LONG",
       400,
     );
   }
 
-  // 3. 所有権チェック
   const stock = await env.DB.prepare(
     "SELECT id FROM stocks WHERE id = ? AND user_id = ?",
   )
@@ -82,7 +90,6 @@ export async function handlePutMemo(
     );
   }
 
-  // 4. upsert
   const memoId = crypto.randomUUID();
   const now = new Date().toISOString();
 
@@ -93,15 +100,14 @@ export async function handlePutMemo(
        memo_text = excluded.memo_text,
        updated_at = excluded.updated_at`,
   )
-    .bind(memoId, stockId, auth.userId, memoText, now, now)
+    .bind(memoId, stockId, auth.userId, normalized, now, now)
     .run();
 
-  // 5. upsert 後のレコード取得
   const memo = await env.DB.prepare(
     "SELECT id, stock_id, memo_text, created_at, updated_at FROM memos WHERE stock_id = ? AND user_id = ?",
   )
     .bind(stockId, auth.userId)
-    .first();
+    .first<MemoRecord>();
 
   return Response.json(memo);
 }
@@ -115,7 +121,7 @@ export async function handleGetMemo(
   env: MemoEnv,
   auth: AuthContext,
 ): Promise<Response> {
-  // 所有権チェック + メモ取得を 1 クエリで
+  // N+1を避けるため所有権チェックとメモ取得を単一 JOIN で処理する
   const memo = await env.DB.prepare(
     `SELECT m.id, m.stock_id, m.memo_text, m.created_at, m.updated_at
      FROM memos m
@@ -123,7 +129,7 @@ export async function handleGetMemo(
      WHERE m.stock_id = ? AND s.user_id = ?`,
   )
     .bind(stockId, auth.userId)
-    .first();
+    .first<MemoRecord>();
 
   if (memo) {
     return Response.json(memo);
