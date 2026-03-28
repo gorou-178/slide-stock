@@ -105,7 +105,7 @@ describe("POST /api/stocks", () => {
       expect(body.canonical_url).toBe(
         "https://speakerdeck.com/newuser/new-slide",
       );
-      expect(body.status).toBe("ready");
+      expect(body.status).toBeUndefined();
       expect(body.title).toBe("Mock SpeakerDeck Slide");
       expect(body.embed_url).toBe("https://speakerdeck.com/player/mock123");
       expect(body.memo_text).toBeNull();
@@ -128,7 +128,7 @@ describe("POST /api/stocks", () => {
       expect(res.status).toBe(201);
       const body = await parseJsonResponse<Record<string, unknown>>(res);
       expect(body.provider).toBe("docswell");
-      expect(body.status).toBe("ready");
+      expect(body.status).toBeUndefined();
       expect(body.title).toBe("Mock Docswell Slide");
     });
 
@@ -144,7 +144,7 @@ describe("POST /api/stocks", () => {
       expect(body.canonical_url).toBe(
         "https://docs.google.com/presentation/d/1abcdefghijklmnopqrstuvwx",
       );
-      expect(body.status).toBe("ready");
+      expect(body.status).toBeUndefined();
       expect(body.title).toBe("Mock Google Slides");
     });
 
@@ -161,6 +161,22 @@ describe("POST /api/stocks", () => {
       );
     });
 
+    it("P_uuid: 作成されたストックのIDがUUID v7フォーマットである", async () => {
+      // UUID v7: xxxxxxxx-xxxx-7xxx-[89ab]xxx-xxxxxxxxxxxx
+      const uuidV7Pattern =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://speakerdeck.com/newuser/uuid-v7-check",
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(201);
+      const body = await parseJsonResponse<Record<string, unknown>>(res);
+      expect(typeof body.id).toBe("string");
+      expect(uuidV7Pattern.test(body.id as string)).toBe(true);
+    });
+
     it("P5: oEmbed 取得失敗でも stock は作成される（メタデータ null）", async () => {
       vi.mocked(fetchSpeakerDeckMetadata).mockRejectedValueOnce(
         new Error("Network timeout"),
@@ -173,7 +189,7 @@ describe("POST /api/stocks", () => {
 
       expect(res.status).toBe(201);
       const body = await parseJsonResponse<Record<string, unknown>>(res);
-      expect(body.status).toBe("ready");
+      expect(body.status).toBeUndefined();
       expect(body.title).toBeNull();
       expect(body.embed_url).toBeNull();
     });

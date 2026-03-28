@@ -70,7 +70,6 @@ interface StockResponse {
   author_name: string | null;
   thumbnail_url: string | null;
   embed_url: string | null;
-  status: string;
   memo_text: string | null;
   created_at: string;
   updated_at: string;
@@ -106,7 +105,7 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
   // --- SpeakerDeck ---
 
   describe("SpeakerDeck フルフロー", () => {
-    it("URL 登録 → メタデータ込みで ready 状態の stock が返る", async () => {
+    it("URL 登録 → メタデータ込みの stock が返る（status フィールドなし）", async () => {
       mockSpeakerDeck.mockResolvedValueOnce({
         title: "Integration Test Slide",
         authorName: "integration-user",
@@ -118,7 +117,7 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
         "https://speakerdeck.com/integration/test-slide",
       );
 
-      expect(created.status).toBe("ready");
+      expect((created as Record<string, unknown>).status).toBeUndefined();
       expect(created.provider).toBe("speakerdeck");
       expect(created.title).toBe("Integration Test Slide");
       expect(created.author_name).toBe("integration-user");
@@ -131,7 +130,7 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
         auth(USER1),
       );
       const detail = await parseJsonResponse<StockResponse>(detailRes);
-      expect(detail.status).toBe("ready");
+      expect((detail as Record<string, unknown>).status).toBeUndefined();
       expect(detail.title).toBe("Integration Test Slide");
       expect(detail.embed_url).toBe("https://speakerdeck.com/player/int123");
 
@@ -152,7 +151,7 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
   // --- Docswell ---
 
   describe("Docswell フルフロー", () => {
-    it("URL 登録 → メタデータ込みで ready 状態", async () => {
+    it("URL 登録 → メタデータ込みの stock が返る（status フィールドなし）", async () => {
       mockDocswell.mockResolvedValueOnce({
         title: "Docswell Integration Slide",
         authorName: "dw-author",
@@ -164,7 +163,7 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
         "https://www.docswell.com/s/integration/INT001",
       );
 
-      expect(created.status).toBe("ready");
+      expect((created as Record<string, unknown>).status).toBeUndefined();
       expect(created.provider).toBe("docswell");
       expect(created.title).toBe("Docswell Integration Slide");
       expect(created.embed_url).toBe(
@@ -176,7 +175,7 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
   // --- Google Slides ---
 
   describe("Google Slides フルフロー", () => {
-    it("URL 登録 → メタデータ込みで ready 状態", async () => {
+    it("URL 登録 → メタデータ込みの stock が返る（status フィールドなし）", async () => {
       mockGoogleSlides.mockResolvedValueOnce({
         title: "Google Integration Presentation",
         authorName: null,
@@ -189,7 +188,7 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
         "https://docs.google.com/presentation/d/1ABCDEFGHIJKLMNOPQRSTUVWXYZintegration/edit",
       );
 
-      expect(created.status).toBe("ready");
+      expect((created as Record<string, unknown>).status).toBeUndefined();
       expect(created.provider).toBe("google_slides");
       expect(created.title).toBe("Google Integration Presentation");
       expect(created.embed_url).toBe(
@@ -208,7 +207,7 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
         "https://speakerdeck.com/integration/deleted-slide",
       );
 
-      expect(created.status).toBe("ready");
+      expect((created as Record<string, unknown>).status).toBeUndefined();
       expect(created.title).toBeNull();
       expect(created.embed_url).toBeNull();
 
@@ -227,7 +226,7 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
   // --- 複数ストック連続登録 ---
 
   describe("複数ストック連続登録フロー", () => {
-    it("3 プロバイダのストックを連続登録 → 全て ready + メタデータ付き", async () => {
+    it("3 プロバイダのストックを連続登録 → 全てメタデータ付き・status フィールドなし", async () => {
       mockSpeakerDeck.mockResolvedValueOnce({
         title: "Multi Slide 1",
         authorName: "author1",
@@ -258,7 +257,7 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
       for (const url of urls) {
         const created = await createStock(url);
         stockIds.push(created.id);
-        expect(created.status).toBe("ready");
+        expect((created as Record<string, unknown>).status).toBeUndefined();
       }
 
       // 一覧取得で全て含まれることを確認
@@ -273,7 +272,7 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
       for (const stockId of stockIds) {
         const found = list.items.find((item) => item.id === stockId);
         expect(found).toBeDefined();
-        expect(found!.status).toBe("ready");
+        expect((found as Record<string, unknown>).status).toBeUndefined();
         expect(found!.title).toBeTruthy();
       }
     });

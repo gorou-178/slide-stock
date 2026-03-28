@@ -197,18 +197,18 @@ describe("T-603: Cookie Secure フラグ（HTTPS 環境）", () => {
   }
 
   describe("handleLogin", () => {
-    it("HTTPS 環境では auth_state Cookie に Secure フラグが付く", async () => {
+    it("HTTPS 環境では __Host-auth_state Cookie に Secure フラグが付く", async () => {
       const response = await handleLogin(new Request("http://localhost/api/auth/login"), HTTPS_ENV);
       const setCookies = getSetCookieHeaders(response);
-      const authStateCookie = setCookies.find((c) => c.startsWith("auth_state="));
+      const authStateCookie = setCookies.find((c) => c.startsWith("__Host-auth_state="));
       expect(authStateCookie).toContain("Secure");
     });
 
-    it("HTTP 環境では auth_state Cookie に Secure フラグが付かない", async () => {
+    it("HTTP 環境でも __Host-auth_state Cookie に Secure フラグが常時付与される（ADR-006）", async () => {
       const response = await handleLogin(new Request("http://localhost/api/auth/login"), HTTP_ENV);
       const setCookies = getSetCookieHeaders(response);
-      const authStateCookie = setCookies.find((c) => c.startsWith("auth_state="));
-      expect(authStateCookie).not.toContain("Secure");
+      const authStateCookie = setCookies.find((c) => c.startsWith("__Host-auth_state="));
+      expect(authStateCookie).toContain("Secure");
     });
   });
 
@@ -225,7 +225,7 @@ describe("T-603: Cookie Secure フラグ（HTTPS 環境）", () => {
 
       const request = new Request(
         `http://localhost/api/auth/callback?code=test-code&state=${state}`,
-        { headers: { Cookie: `auth_state=${state}` } },
+        { headers: { Cookie: `__Host-auth_state=${state}` } },
       );
       const deps: AuthDeps = {
         verifyIdToken: async () => ({
@@ -242,18 +242,18 @@ describe("T-603: Cookie Secure フラグ（HTTPS 環境）", () => {
       }
     }
 
-    it("HTTPS 環境では session Cookie に Secure フラグが付く", async () => {
+    it("HTTPS 環境では __Host-session Cookie に Secure フラグが付く", async () => {
       const response = await executeCallback(HTTPS_ENV);
       const setCookies = getSetCookieHeaders(response);
-      const sessionCookie = setCookies.find((c) => c.startsWith("session=") && !c.includes("Max-Age=0"));
+      const sessionCookie = setCookies.find((c) => c.startsWith("__Host-session=") && !c.includes("Max-Age=0"));
       expect(sessionCookie).toContain("Secure");
     });
 
-    it("HTTP 環境では session Cookie に Secure フラグが付かない", async () => {
+    it("HTTP 環境でも __Host-session Cookie に Secure フラグが常時付与される（ADR-006）", async () => {
       const response = await executeCallback(HTTP_ENV);
       const setCookies = getSetCookieHeaders(response);
-      const sessionCookie = setCookies.find((c) => c.startsWith("session=") && !c.includes("Max-Age=0"));
-      expect(sessionCookie).not.toContain("Secure");
+      const sessionCookie = setCookies.find((c) => c.startsWith("__Host-session=") && !c.includes("Max-Age=0"));
+      expect(sessionCookie).toContain("Secure");
     });
   });
 
@@ -264,10 +264,10 @@ describe("T-603: Cookie Secure フラグ（HTTPS 環境）", () => {
       expect(setCookie).toContain("Secure");
     });
 
-    it("HTTP 環境では logout Cookie に Secure フラグが付かない", async () => {
+    it("HTTP 環境でも logout Cookie に Secure フラグが常時付与される（ADR-006）", async () => {
       const response = await handleLogout(new Request("http://localhost/api/auth/logout", { method: "POST" }), HTTP_ENV);
       const setCookie = response.headers.get("Set-Cookie") ?? "";
-      expect(setCookie).not.toContain("Secure");
+      expect(setCookie).toContain("Secure");
     });
   });
 });

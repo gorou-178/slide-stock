@@ -23,8 +23,8 @@ export async function seedDatabase(db: D1Database): Promise<void> {
 
   // Stocks
   const insertStock = db.prepare(
-    `INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, title, author_name, thumbnail_url, embed_url, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, title, author_name, thumbnail_url, embed_url, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   for (const stock of TEST_STOCKS) {
     await insertStock
@@ -38,7 +38,6 @@ export async function seedDatabase(db: D1Database): Promise<void> {
         stock.author_name,
         stock.thumbnail_url,
         stock.embed_url,
-        stock.status,
         stock.created_at,
         stock.updated_at
       )

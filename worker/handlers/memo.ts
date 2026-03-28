@@ -3,6 +3,7 @@
  * memo-api-spec.md セクション 3〜4
  */
 
+import { uuidv7 } from "uuidv7";
 import type { AuthContext } from "../middleware/test-auth-bypass";
 
 export interface MemoEnv {
@@ -90,7 +91,7 @@ export async function handlePutMemo(
     );
   }
 
-  const memoId = crypto.randomUUID();
+  const memoId = uuidv7();
   const now = new Date().toISOString();
 
   await env.DB.prepare(

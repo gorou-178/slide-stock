@@ -92,6 +92,29 @@ describe("PUT /api/stocks/:id/memo", () => {
       expect(body.updated_at).toBeDefined();
     });
 
+    it("M_uuid: 作成されたメモのIDがUUID v7フォーマットである", async () => {
+      // UUID v7: xxxxxxxx-xxxx-7xxx-[89ab]xxx-xxxxxxxxxxxx
+      const uuidV7Pattern =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+      const request = createJsonRequest(
+        `/api/stocks/${STOCK_WITHOUT_MEMO}/memo`,
+        "PUT",
+        { memo_text: "UUID v7検証メモ" },
+      );
+      const res = await handlePutMemo(
+        STOCK_WITHOUT_MEMO,
+        request,
+        memoEnv(),
+        auth(USER1),
+      );
+
+      expect(res.status).toBe(200);
+      const body = await parseJsonResponse<Record<string, unknown>>(res);
+      expect(typeof body.id).toBe("string");
+      expect(uuidV7Pattern.test(body.id as string)).toBe(true);
+    });
+
     it("M2: メモ更新（既存メモあり、updated_at が更新される）", async () => {
       // 既存メモを取得して created_at を記録
       const existing = await parseJsonResponse<Record<string, unknown>>(

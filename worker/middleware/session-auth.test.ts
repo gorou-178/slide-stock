@@ -1,9 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { sessionAuth } from "./session-auth";
 
 /**
- * T-508: 認証ミドルウェアのユニットテスト
+ * T-508 / T-751: 認証ミドルウェアのユニットテスト
  * 仕様: docs/auth-spec.md セクション 5
+ *      docs/adr/006-cookie-security.md
  */
 
 const SESSION_SECRET = "a".repeat(64);
@@ -48,9 +49,9 @@ function createRequest(cookie?: string): Request {
 // ============================================================
 describe("sessionAuth", () => {
   describe("正常系", () => {
-    it("有効なセッション Cookie から AuthContext を返す", async () => {
+    it("有効な __Host-session Cookie から AuthContext を返す", async () => {
       const session = await createValidSession("user-123", SESSION_SECRET);
-      const request = createRequest(`session=${session}`);
+      const request = createRequest(`__Host-session=${session}`);
 
       const result = await sessionAuth(request, {
         SESSION_SECRET,
@@ -62,7 +63,7 @@ describe("sessionAuth", () => {
   });
 
   describe("Cookie 不存在", () => {
-    it("session Cookie が無い場合、null を返す", async () => {
+    it("__Host-session Cookie が無い場合、null を返す", async () => {
       const request = createRequest();
       const result = await sessionAuth(request, {
         SESSION_SECRET,
@@ -79,6 +80,18 @@ describe("sessionAuth", () => {
 
       expect(result).toBeNull();
     });
+
+    it("旧 Cookie 名 'session=' では認証されない（__Host- 移行後）", async () => {
+      // __Host-prefix 導入により、旧名称 session= は無効となる
+      const session = await createValidSession("user-123", SESSION_SECRET);
+      const request = createRequest(`session=${session}`);
+
+      const result = await sessionAuth(request, {
+        SESSION_SECRET,
+      });
+
+      expect(result).toBeNull();
+    });
   });
 
   describe("改ざん検知", () => {
@@ -86,7 +99,7 @@ describe("sessionAuth", () => {
       const session = await createValidSession("user-123", SESSION_SECRET);
       const [payload] = session.split(".");
       const tampered = `${payload}.tampered-signature`;
-      const request = createRequest(`session=${tampered}`);
+      const request = createRequest(`__Host-session=${tampered}`);
 
       const result = await sessionAuth(request, {
         SESSION_SECRET,
@@ -102,7 +115,7 @@ describe("sessionAuth", () => {
         JSON.stringify({ uid: "admin", exp: Math.floor(Date.now() / 1000) + 99999 }),
       );
       const tampered = `${fakePayload}.${signature}`;
-      const request = createRequest(`session=${tampered}`);
+      const request = createRequest(`__Host-session=${tampered}`);
 
       const result = await sessionAuth(request, {
         SESSION_SECRET,
@@ -113,7 +126,7 @@ describe("sessionAuth", () => {
 
     it("異なる SESSION_SECRET で署名された Cookie は無効", async () => {
       const session = await createValidSession("user-123", "b".repeat(64));
-      const request = createRequest(`session=${session}`);
+      const request = createRequest(`__Host-session=${session}`);
 
       const result = await sessionAuth(request, {
         SESSION_SECRET, // "a" で検証
@@ -131,7 +144,7 @@ describe("sessionAuth", () => {
         SESSION_SECRET,
         pastExp,
       );
-      const request = createRequest(`session=${session}`);
+      const request = createRequest(`__Host-session=${session}`);
 
       const result = await sessionAuth(request, {
         SESSION_SECRET,
@@ -147,7 +160,7 @@ describe("sessionAuth", () => {
         SESSION_SECRET,
         futureExp,
       );
-      const request = createRequest(`session=${session}`);
+      const request = createRequest(`__Host-session=${session}`);
 
       const result = await sessionAuth(request, {
         SESSION_SECRET,
@@ -160,7 +173,7 @@ describe("sessionAuth", () => {
 
   describe("不正なフォーマット", () => {
     it("ドット区切りでない Cookie 値は null を返す", async () => {
-      const request = createRequest("session=invalid-no-dot");
+      const request = createRequest("__Host-session=invalid-no-dot");
       const result = await sessionAuth(request, {
         SESSION_SECRET,
       });
@@ -183,7 +196,7 @@ describe("sessionAuth", () => {
         new TextEncoder().encode(badPayload),
       );
       const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)));
-      const request = createRequest(`session=${badPayload}.${sigB64}`);
+      const request = createRequest(`__Host-session=${badPayload}.${sigB64}`);
 
       const result = await sessionAuth(request, {
         SESSION_SECRET,
@@ -207,7 +220,7 @@ describe("sessionAuth", () => {
         new TextEncoder().encode(payload),
       );
       const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)));
-      const request = createRequest(`session=${payload}.${sigB64}`);
+      const request = createRequest(`__Host-session=${payload}.${sigB64}`);
 
       const result = await sessionAuth(request, {
         SESSION_SECRET,

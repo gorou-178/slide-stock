@@ -3,6 +3,7 @@
  * stock-api-spec.md セクション 3〜6
  */
 
+import { uuidv7 } from "uuidv7";
 import type { AuthContext } from "../middleware/test-auth-bypass";
 import {
   detectProvider,
@@ -29,7 +30,6 @@ interface StockRow {
   author_name: string | null;
   thumbnail_url: string | null;
   embed_url: string | null;
-  status: string;
   created_at: string;
   updated_at: string;
   memo_text: string | null;
@@ -125,13 +125,13 @@ export async function handleCreateStock(
   }
 
   // 5. stock 挿入
-  const stockId = crypto.randomUUID();
+  const stockId = uuidv7();
   const now = new Date().toISOString();
 
   try {
     await env.DB.prepare(
-      `INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'ready', ?, ?)`,
+      `INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(stockId, auth.userId, url, canonicalUrl, provider, now, now)
       .run();
@@ -182,7 +182,6 @@ export async function handleCreateStock(
       author_name: metadata.authorName,
       thumbnail_url: metadata.thumbnailUrl,
       embed_url: metadata.embedUrl,
-      status: "ready",
       memo_text: null,
       created_at: now,
       updated_at: now,
@@ -250,7 +249,7 @@ export async function handleListStocks(
       `SELECT
         s.id, s.original_url, s.canonical_url, s.provider,
         s.title, s.author_name, s.thumbnail_url, s.embed_url,
-        s.status, s.created_at, s.updated_at,
+        s.created_at, s.updated_at,
         m.memo_text
       FROM stocks s
       LEFT JOIN memos m ON m.stock_id = s.id AND m.user_id = s.user_id
@@ -266,7 +265,7 @@ export async function handleListStocks(
       `SELECT
         s.id, s.original_url, s.canonical_url, s.provider,
         s.title, s.author_name, s.thumbnail_url, s.embed_url,
-        s.status, s.created_at, s.updated_at,
+        s.created_at, s.updated_at,
         m.memo_text
       FROM stocks s
       LEFT JOIN memos m ON m.stock_id = s.id AND m.user_id = s.user_id
@@ -304,7 +303,7 @@ export async function handleGetStock(
     `SELECT
       s.id, s.original_url, s.canonical_url, s.provider,
       s.title, s.author_name, s.thumbnail_url, s.embed_url,
-      s.status, s.created_at, s.updated_at,
+      s.created_at, s.updated_at,
       m.memo_text
     FROM stocks s
     LEFT JOIN memos m ON m.stock_id = s.id AND m.user_id = s.user_id

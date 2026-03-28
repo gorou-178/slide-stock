@@ -15,7 +15,7 @@ export async function sessionAuth(
   let sessionValue: string | undefined;
   for (const pair of cookieHeader.split(";")) {
     const [name, ...rest] = pair.split("=");
-    if (name.trim() === "session") {
+    if (name.trim() === "__Host-session") {
       sessionValue = rest.join("=").trim();
       break;
     }

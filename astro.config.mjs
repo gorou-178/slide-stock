@@ -12,4 +12,12 @@ export default defineConfig({
       enabled: true, // dev 環境で D1/Queue バインディングを利用可能に
     },
   }),
+  vite: {
+    server: {
+      https: {
+        key: './localhost+2-key.pem',
+        cert: './localhost+2.pem',
+      },
+    },
+  },
 });
