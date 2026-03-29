@@ -20,8 +20,8 @@ import {
   createJsonRequest,
   parseJsonResponse,
 } from "../../test/helpers";
+import { handleCreateStock } from "./stock-create";
 import {
-  handleCreateStock,
   handleListStocks,
   handleGetStock,
   type StockEnv,

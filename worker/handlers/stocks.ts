@@ -1,21 +1,9 @@
 /**
  * Stock CRUD ハンドラー
- * stock-api-spec.md セクション 3〜6
+ * stock-api-spec.md セクション 4〜6
  */
 
-import { uuidv7 } from "uuidv7";
 import type { AuthContext } from "../middleware/test-auth-bypass";
-import {
-  detectProvider,
-  ProviderError,
-  type ProviderErrorCode,
-} from "../lib/provider";
-import {
-  fetchSpeakerDeckMetadata,
-  fetchDocswellMetadata,
-  fetchGoogleSlidesMetadata,
-  type StockMetadata,
-} from "../lib/oembed";
 
 export interface StockEnv {
   DB: D1Database;
@@ -35,176 +23,12 @@ interface StockRow {
   memo_text: string | null;
 }
 
-function jsonError(
+export function jsonError(
   error: string,
   code: string,
   status: number,
 ): Response {
   return Response.json({ error, code }, { status });
-}
-
-/** ProviderErrorCode → HTTP エラーレスポンス（stock-api-spec.md セクション 3.3） */
-const PROVIDER_ERROR_MAP: Record<
-  ProviderErrorCode,
-  { status: number; code: string }
-> = {
-  INVALID_URL: { status: 400, code: "INVALID_URL" },
-  UNSUPPORTED_SCHEME: { status: 400, code: "INVALID_URL" },
-  UNSUPPORTED_PROVIDER: { status: 400, code: "UNSUPPORTED_PROVIDER" },
-  INVALID_FORMAT: { status: 400, code: "INVALID_FORMAT" },
-  UNSUPPORTED_URL_TYPE: { status: 400, code: "UNSUPPORTED_URL_TYPE" },
-};
-
-/**
- * POST /api/stocks
- * stock-api-spec.md セクション 3
- */
-export async function handleCreateStock(
-  request: Request,
-  env: StockEnv,
-  auth: AuthContext,
-): Promise<Response> {
-  // 1. JSON パース
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return jsonError(
-      "リクエストボディが不正です",
-      "INVALID_REQUEST",
-      400,
-    );
-  }
-
-  // 2. url フィールド検証
-  if (
-    !body ||
-    typeof body !== "object" ||
-    !("url" in body)
-  ) {
-    return jsonError("url は必須です", "INVALID_REQUEST", 400);
-  }
-
-  const url = (body as { url: unknown }).url;
-  if (typeof url !== "string" || url.trim() === "") {
-    return jsonError(
-      "入力された文字列は有効な URL ではありません",
-      "INVALID_URL",
-      400,
-    );
-  }
-
-  // 3. プロバイダ検出・URL 正規化
-  let provider: string;
-  let canonicalUrl: string;
-  try {
-    const result = detectProvider(url);
-    provider = result.provider;
-    canonicalUrl = result.canonicalUrl;
-  } catch (error) {
-    if (error instanceof ProviderError) {
-      const mapping = PROVIDER_ERROR_MAP[error.code];
-      return jsonError(error.message, mapping.code, mapping.status);
-    }
-    throw error;
-  }
-
-  // 4. 重複チェック
-  const existing = await env.DB.prepare(
-    "SELECT id FROM stocks WHERE user_id = ? AND canonical_url = ? LIMIT 1",
-  )
-    .bind(auth.userId, canonicalUrl)
-    .first<{ id: string }>();
-
-  if (existing) {
-    return jsonError(
-      "このスライドは既にストック済みです",
-      "DUPLICATE_STOCK",
-      409,
-    );
-  }
-
-  // 5. stock 挿入
-  const stockId = uuidv7();
-  const now = new Date().toISOString();
-
-  try {
-    await env.DB.prepare(
-      `INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-      .bind(stockId, auth.userId, url, canonicalUrl, provider, now, now)
-      .run();
-  } catch (e: unknown) {
-    // UNIQUE 制約違反（race condition で重複した場合）
-    if (e instanceof Error && e.message.includes("UNIQUE constraint failed")) {
-      return jsonError(
-        "このスライドは既にストック済みです",
-        "DUPLICATE_STOCK",
-        409,
-      );
-    }
-    throw e;
-  }
-
-  console.log(JSON.stringify({ action: "stock_created", stockId, provider, userId: auth.userId }));
-
-  // 6. oEmbed メタデータ取得（同期）
-  let metadata: StockMetadata = {
-    title: null, authorName: null, thumbnailUrl: null, embedUrl: null,
-  };
-
-  try {
-    metadata = await fetchMetadataByProvider(provider, canonicalUrl);
-    await env.DB.prepare(
-      `UPDATE stocks SET title = ?, author_name = ?, embed_url = ?, thumbnail_url = ?, updated_at = ?
-       WHERE id = ?`,
-    )
-      .bind(metadata.title, metadata.authorName, metadata.embedUrl,
-            metadata.thumbnailUrl, new Date().toISOString(), stockId)
-      .run();
-    console.log(JSON.stringify({ action: "oembed_success", stockId, provider }));
-  } catch (error) {
-    console.error(JSON.stringify({
-      action: "oembed_fetch_failed", stockId, provider, error: String(error),
-    }));
-    // メタデータなしで続行（stock 自体は作成済み）
-  }
-
-  // 7. レスポンス
-  return Response.json(
-    {
-      id: stockId,
-      original_url: url,
-      canonical_url: canonicalUrl,
-      provider,
-      title: metadata.title,
-      author_name: metadata.authorName,
-      thumbnail_url: metadata.thumbnailUrl,
-      embed_url: metadata.embedUrl,
-      memo_text: null,
-      created_at: now,
-      updated_at: now,
-    },
-    { status: 201 },
-  );
-}
-
-/** プロバイダに応じたメタデータ取得関数を呼び出す */
-async function fetchMetadataByProvider(
-  provider: string,
-  canonicalUrl: string,
-): Promise<StockMetadata> {
-  switch (provider) {
-    case "speakerdeck":
-      return fetchSpeakerDeckMetadata(canonicalUrl);
-    case "docswell":
-      return fetchDocswellMetadata(canonicalUrl);
-    case "google_slides":
-      return fetchGoogleSlidesMetadata(canonicalUrl);
-    default:
-      throw new Error(`Unknown provider: ${provider}`);
-  }
 }
 
 /**
@@ -218,7 +42,6 @@ export async function handleListStocks(
 ): Promise<Response> {
   const url = new URL(request.url);
 
-  // limit パラメータ
   let limit = 20;
   const limitParam = url.searchParams.get("limit");
   if (limitParam !== null) {
@@ -228,7 +51,6 @@ export async function handleListStocks(
     }
   }
 
-  // cursor パラメータ
   const cursor = url.searchParams.get("cursor");
 
   let result: D1Result<StockRow>;
@@ -332,7 +154,6 @@ export async function handleDeleteStock(
   env: StockEnv,
   auth: AuthContext,
 ): Promise<Response> {
-  // 1. 所有権チェック
   const existing = await env.DB.prepare(
     "SELECT id FROM stocks WHERE id = ? AND user_id = ?",
   )
@@ -347,14 +168,12 @@ export async function handleDeleteStock(
     );
   }
 
-  // 2. 関連メモを削除
   await env.DB.prepare(
     "DELETE FROM memos WHERE stock_id = ? AND user_id = ?",
   )
     .bind(stockId, auth.userId)
     .run();
 
-  // 3. stock を削除
   await env.DB.prepare(
     "DELETE FROM stocks WHERE id = ? AND user_id = ?",
   )
@@ -363,6 +182,5 @@ export async function handleDeleteStock(
 
   console.log(JSON.stringify({ action: "stock_deleted", stockId, userId: auth.userId }));
 
-  // 4. 204 No Content
   return new Response(null, { status: 204 });
 }

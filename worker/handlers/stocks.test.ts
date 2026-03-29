@@ -22,8 +22,8 @@ import {
   TEST_STOCKS,
   TEST_MEMOS,
 } from "../../test/helpers";
+import { handleCreateStock } from "./stock-create";
 import {
-  handleCreateStock,
   handleListStocks,
   handleGetStock,
   handleDeleteStock,

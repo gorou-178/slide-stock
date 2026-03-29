@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { resolveAuth, unauthorized } from '../../../../worker/auth-helpers';
-import { handleCreateStock, handleListStocks } from '../../../../worker/handlers/stocks';
+import { handleCreateStock } from '../../../../worker/handlers/stock-create';
+import { handleListStocks } from '../../../../worker/handlers/stocks';
 
 export const prerender = false;
 

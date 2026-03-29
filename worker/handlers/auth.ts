@@ -129,19 +129,16 @@ export async function handleCallback(
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
 
-  // 1. state 検証
   const cookies = parseCookies(request);
   const authState = cookies.get("__Host-auth_state");
   if (!authState || authState !== state) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // 2. code 検証
   if (!code) {
     return Response.json({ error: "Bad Request" }, { status: 400 });
   }
 
-  // 3. Token 交換
   let tokenRes: Response;
   try {
     tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -165,7 +162,6 @@ export async function handleCallback(
 
   const tokenData = (await tokenRes.json()) as { id_token: string };
 
-  // 4. ID Token 検証
   const verify = deps.verifyIdToken ?? verifyGoogleIdToken;
   let claims: IdTokenClaims;
   try {
@@ -174,7 +170,6 @@ export async function handleCallback(
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // 5. ユーザー upsert（auth-spec.md セクション 6）
   let userId: string;
   const existing = await env.DB.prepare(
     "SELECT id FROM users WHERE google_sub = ?",
@@ -198,8 +193,7 @@ export async function handleCallback(
 
   console.log(JSON.stringify({ action: "auth_callback_success", userId }));
 
-  // 6. セッション Cookie 発行
-  const parsed = Number(env.SESSION_MAX_AGE ?? "604800");
+  const parsed = Number(env.SESSION_MAX_AGE);
   const maxAge = Number.isFinite(parsed) && parsed > 0 ? parsed : 604800;
   const sessionValue = await createSessionCookie(userId, env.SESSION_SECRET, maxAge);
 

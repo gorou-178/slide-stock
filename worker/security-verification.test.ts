@@ -23,7 +23,8 @@ import {
   parseJsonResponse,
   TEST_USERS,
 } from "../test/helpers";
-import { handleCreateStock, type StockEnv } from "./handlers/stocks";
+import { handleCreateStock } from "./handlers/stock-create";
+import type { StockEnv } from "./handlers/stocks";
 import type { AuthContext } from "./middleware/test-auth-bypass";
 
 // oEmbed モック
