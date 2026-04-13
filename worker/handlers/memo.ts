@@ -5,6 +5,7 @@
 
 import { uuidv7 } from "uuidv7";
 import type { AuthContext } from "../middleware/test-auth-bypass";
+import { jsonError } from "../lib/http-response";
 
 export interface MemoEnv {
   DB: D1Database;
@@ -19,14 +20,6 @@ type MemoRecord = {
   created_at: string;
   updated_at: string;
 };
-
-function jsonError(
-  error: string,
-  code: string,
-  status: number,
-): Response {
-  return Response.json({ error, code }, { status });
-}
 
 /**
  * PUT /api/stocks/:id/memo

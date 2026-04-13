@@ -4,6 +4,7 @@
  */
 
 import type { AuthContext } from "../middleware/test-auth-bypass";
+import { jsonError } from "../lib/http-response";
 
 export interface StockEnv {
   DB: D1Database;
@@ -21,14 +22,6 @@ interface StockRow {
   created_at: string;
   updated_at: string;
   memo_text: string | null;
-}
-
-export function jsonError(
-  error: string,
-  code: string,
-  status: number,
-): Response {
-  return Response.json({ error, code }, { status });
 }
 
 /**

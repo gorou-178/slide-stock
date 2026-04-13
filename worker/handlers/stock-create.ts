@@ -16,7 +16,8 @@ import {
   fetchGoogleSlidesMetadata,
   type StockMetadata,
 } from "../lib/oembed";
-import { jsonError, type StockEnv } from "./stocks";
+import { jsonError } from "../lib/http-response";
+import { type StockEnv } from "./stocks";
 
 /** ProviderErrorCode → HTTP エラーレスポンス（stock-api-spec.md セクション 3.3） */
 const PROVIDER_ERROR_MAP: Record<
