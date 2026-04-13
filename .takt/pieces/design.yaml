@@ -1,13 +1,13 @@
 name: design
 description: 設計タスク用ピース（計画 → 設計書作成 → AIレビュー → 並列レビュー → 完了）
-piece_config:
+workflow_config:
   provider_options:
     codex:
       network_access: true
     opencode:
       network_access: true
-max_movements: 20
-initial_movement: plan
+max_steps: 20
+initial_step: plan
 loop_monitors:
   - cycle:
       - ai_review
@@ -45,7 +45,7 @@ loop_monitors:
           next: reviewers
         - condition: 非生産的（同じ指摘が繰り返される）
           next: ABORT
-movements:
+steps:
   - name: plan
     edit: false
     persona: planner
