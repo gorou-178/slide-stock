@@ -323,15 +323,6 @@ footer {
   gap: var(--space-md);
 }
 
-.stock-card-pending {
-  color: var(--color-text-secondary);
-  font-style: italic;
-}
-
-.stock-card-failed {
-  color: var(--color-error);
-}
-
 /* --- Badge --- */
 .badge {
   display: inline-block;

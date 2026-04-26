@@ -1,4 +1,5 @@
 ---
+export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import MemoEditor from '../components/MemoEditor.astro';
 ---
@@ -78,11 +79,11 @@ import MemoEditor from '../components/MemoEditor.astro';
 
   function updateCharCount() {
     const count = memoTextarea.value.length;
-    memoCharCount.textContent = `${count.toLocaleString()} / 10,000`;
+    memoCharCount.textContent = `${count.toLocaleString()} / 200`;
     memoCharCount.className = 'char-count';
-    if (count > 10000) {
+    if (count > 200) {
       memoCharCount.classList.add('error');
-    } else if (count > 9500) {
+    } else if (count > 190) {
       memoCharCount.classList.add('warning');
     }
   }
@@ -115,15 +116,7 @@ import MemoEditor from '../components/MemoEditor.astro';
       detailBadge.className = `badge badge-${stock.provider}`;
       detailBadge.textContent = PROVIDER_LABELS[stock.provider] || stock.provider;
 
-      if (stock.status === 'pending') {
-        detailTitle.textContent = 'メタデータ取得中...';
-        detailTitle.classList.add('stock-card-pending');
-      } else if (stock.status === 'failed') {
-        detailTitle.textContent = 'メタデータの取得に失敗しました';
-        detailTitle.classList.add('stock-card-failed');
-      } else {
-        detailTitle.textContent = stock.title || 'タイトルなし';
-      }
+      detailTitle.textContent = stock.title || 'タイトルなし';
 
       if (stock.author_name) {
         detailAuthor.textContent = stock.author_name;

@@ -10,12 +10,11 @@ export async function sessionAuth(
   request: Request,
   env: { SESSION_SECRET: string },
 ): Promise<AuthContext | null> {
-  // 1. Cookie "session" を取得
   const cookieHeader = request.headers.get("Cookie") || "";
   let sessionValue: string | undefined;
   for (const pair of cookieHeader.split(";")) {
     const [name, ...rest] = pair.split("=");
-    if (name.trim() === "session") {
+    if (name.trim() === "__Host-session") {
       sessionValue = rest.join("=").trim();
       break;
     }
@@ -23,14 +22,12 @@ export async function sessionAuth(
 
   if (!sessionValue) return null;
 
-  // 2. {payload}.{signature} に分離
   const dotIndex = sessionValue.indexOf(".");
   if (dotIndex === -1) return null;
 
   const payloadB64 = sessionValue.substring(0, dotIndex);
   const signatureB64 = sessionValue.substring(dotIndex + 1);
 
-  // 3. HMAC-SHA256 署名を検証
   try {
     const key = await crypto.subtle.importKey(
       "raw",
@@ -55,7 +52,6 @@ export async function sessionAuth(
     return null;
   }
 
-  // 4. payload をデコード
   let payload: { uid?: string; exp?: number };
   try {
     payload = JSON.parse(atob(payloadB64));
@@ -65,10 +61,8 @@ export async function sessionAuth(
 
   if (!payload.uid || !payload.exp) return null;
 
-  // 5. 有効期限チェック
   if (payload.exp < Math.floor(Date.now() / 1000)) return null;
 
-  // 6. AuthContext を返す（MVP: uid を信頼、D1 クエリ省略）
   return {
     userId: payload.uid,
     email: "",

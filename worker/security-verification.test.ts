@@ -12,22 +12,40 @@
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import { env } from "cloudflare:test";
 import { testAuthBypass } from "./middleware/test-auth-bypass";
 import { fetchDocswellMetadata, PermanentError } from "./lib/oembed";
 import { handleLogin, handleCallback, handleLogout, type AuthEnv, type AuthDeps } from "./handlers/auth";
 import {
   applyMigrationsAndSeed,
   resetSeedData,
-  workerFetch,
+  createJsonRequest,
   parseJsonResponse,
   TEST_USERS,
 } from "../test/helpers";
-import { sendOEmbedMessage } from "./lib/queue";
+import { handleCreateStock } from "./handlers/stock-create";
+import type { StockEnv } from "./handlers/stocks";
+import type { AuthContext } from "./middleware/test-auth-bypass";
 
-// Queue スタブ
-vi.mock("./lib/queue", () => ({
-  sendOEmbedMessage: vi.fn().mockResolvedValue(undefined),
-}));
+// oEmbed モック
+vi.mock("./lib/oembed", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./lib/oembed")>();
+  return {
+    ...original,
+    fetchSpeakerDeckMetadata: vi.fn().mockResolvedValue({
+      title: "Mock Slide", authorName: "mock-author",
+      thumbnailUrl: null, embedUrl: "https://speakerdeck.com/player/mock",
+    }),
+    fetchDocswellMetadata: vi.fn().mockResolvedValue({
+      title: "Mock Slide", authorName: "mock-author",
+      thumbnailUrl: null, embedUrl: "https://www.docswell.com/slide/MOCK/embed",
+    }),
+    fetchGoogleSlidesMetadata: vi.fn().mockResolvedValue({
+      title: "Mock Slide", authorName: null,
+      thumbnailUrl: null, embedUrl: "https://docs.google.com/presentation/d/mock/embed",
+    }),
+  };
+});
 
 // ============================================================
 // T-601: TEST_MODE 本番誤設定防止ガード
@@ -74,6 +92,14 @@ describe("T-601: TEST_MODE 本番誤設定防止ガード", () => {
 // ============================================================
 describe("T-602: Docswell embed_url ドメインバリデーション", () => {
   let originalFetch: typeof fetch;
+  // vi.mock でモジュール全体が差し替わっているため、実際のドメインバリデーションを
+  // テストするには vi.importActual で本物の関数を取得する
+  let realFetchDocswellMetadata: typeof fetchDocswellMetadata;
+
+  beforeAll(async () => {
+    const actual = await vi.importActual<typeof import("./lib/oembed")>("./lib/oembed");
+    realFetchDocswellMetadata = actual.fetchDocswellMetadata;
+  });
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -81,7 +107,6 @@ describe("T-602: Docswell embed_url ドメインバリデーション", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    vi.restoreAllMocks();
   });
 
   function mockDocswellResponse(url: string) {
@@ -100,41 +125,41 @@ describe("T-602: Docswell embed_url ドメインバリデーション", () => {
 
   it("正規の docswell.com ドメイン URL は受け入れる", async () => {
     mockDocswellResponse("https://www.docswell.com/slide/59VDWM/embed");
-    const result = await fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM");
+    const result = await realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM");
     expect(result.embedUrl).toBe("https://www.docswell.com/slide/59VDWM/embed");
   });
 
   it("サブドメインなしの docswell.com URL も受け入れる", async () => {
     mockDocswellResponse("https://docswell.com/slide/59VDWM/embed");
-    const result = await fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM");
+    const result = await realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM");
     expect(result.embedUrl).toBe("https://docswell.com/slide/59VDWM/embed");
   });
 
   it("HTTP プロトコルの URL は PermanentError", async () => {
     mockDocswellResponse("http://www.docswell.com/slide/59VDWM/embed");
     await expect(
-      fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
     ).rejects.toThrow(PermanentError);
   });
 
   it("docswell.com 以外のドメインは PermanentError", async () => {
     mockDocswellResponse("https://evil.example.com/slide/embed");
     await expect(
-      fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
     ).rejects.toThrow(PermanentError);
   });
 
   it("不正な URL 形式は PermanentError", async () => {
     mockDocswellResponse("not-a-valid-url");
     await expect(
-      fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
     ).rejects.toThrow(PermanentError);
   });
 
   it("docswell.com のサブドメインを装った偽ドメインは PermanentError", async () => {
     mockDocswellResponse("https://docswell.com.evil.example.com/slide/embed");
     await expect(
-      fetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
     ).rejects.toThrow(PermanentError);
   });
 });
@@ -161,7 +186,6 @@ describe("T-603: Cookie Secure フラグ（HTTPS 環境）", () => {
     GOOGLE_CLIENT_SECRET: "test-client-secret",
     SESSION_SECRET: "a".repeat(64),
     CALLBACK_URL: "https://slide-stock.gorou.dev/api/auth/callback",
-    OEMBED_QUEUE: {} as Queue,
   };
 
   const HTTP_ENV: AuthEnv = {
@@ -174,18 +198,18 @@ describe("T-603: Cookie Secure フラグ（HTTPS 環境）", () => {
   }
 
   describe("handleLogin", () => {
-    it("HTTPS 環境では auth_state Cookie に Secure フラグが付く", async () => {
+    it("HTTPS 環境では __Host-auth_state Cookie に Secure フラグが付く", async () => {
       const response = await handleLogin(new Request("http://localhost/api/auth/login"), HTTPS_ENV);
       const setCookies = getSetCookieHeaders(response);
-      const authStateCookie = setCookies.find((c) => c.startsWith("auth_state="));
+      const authStateCookie = setCookies.find((c) => c.startsWith("__Host-auth_state="));
       expect(authStateCookie).toContain("Secure");
     });
 
-    it("HTTP 環境では auth_state Cookie に Secure フラグが付かない", async () => {
+    it("HTTP 環境でも __Host-auth_state Cookie に Secure フラグが常時付与される（ADR-006）", async () => {
       const response = await handleLogin(new Request("http://localhost/api/auth/login"), HTTP_ENV);
       const setCookies = getSetCookieHeaders(response);
-      const authStateCookie = setCookies.find((c) => c.startsWith("auth_state="));
-      expect(authStateCookie).not.toContain("Secure");
+      const authStateCookie = setCookies.find((c) => c.startsWith("__Host-auth_state="));
+      expect(authStateCookie).toContain("Secure");
     });
   });
 
@@ -202,7 +226,7 @@ describe("T-603: Cookie Secure フラグ（HTTPS 環境）", () => {
 
       const request = new Request(
         `http://localhost/api/auth/callback?code=test-code&state=${state}`,
-        { headers: { Cookie: `auth_state=${state}` } },
+        { headers: { Cookie: `__Host-auth_state=${state}` } },
       );
       const deps: AuthDeps = {
         verifyIdToken: async () => ({
@@ -219,18 +243,18 @@ describe("T-603: Cookie Secure フラグ（HTTPS 環境）", () => {
       }
     }
 
-    it("HTTPS 環境では session Cookie に Secure フラグが付く", async () => {
+    it("HTTPS 環境では __Host-session Cookie に Secure フラグが付く", async () => {
       const response = await executeCallback(HTTPS_ENV);
       const setCookies = getSetCookieHeaders(response);
-      const sessionCookie = setCookies.find((c) => c.startsWith("session=") && !c.includes("Max-Age=0"));
+      const sessionCookie = setCookies.find((c) => c.startsWith("__Host-session=") && !c.includes("Max-Age=0"));
       expect(sessionCookie).toContain("Secure");
     });
 
-    it("HTTP 環境では session Cookie に Secure フラグが付かない", async () => {
+    it("HTTP 環境でも __Host-session Cookie に Secure フラグが常時付与される（ADR-006）", async () => {
       const response = await executeCallback(HTTP_ENV);
       const setCookies = getSetCookieHeaders(response);
-      const sessionCookie = setCookies.find((c) => c.startsWith("session=") && !c.includes("Max-Age=0"));
-      expect(sessionCookie).not.toContain("Secure");
+      const sessionCookie = setCookies.find((c) => c.startsWith("__Host-session=") && !c.includes("Max-Age=0"));
+      expect(sessionCookie).toContain("Secure");
     });
   });
 
@@ -241,10 +265,10 @@ describe("T-603: Cookie Secure フラグ（HTTPS 環境）", () => {
       expect(setCookie).toContain("Secure");
     });
 
-    it("HTTP 環境では logout Cookie に Secure フラグが付かない", async () => {
+    it("HTTP 環境でも logout Cookie に Secure フラグが常時付与される（ADR-006）", async () => {
       const response = await handleLogout(new Request("http://localhost/api/auth/logout", { method: "POST" }), HTTP_ENV);
       const setCookie = response.headers.get("Set-Cookie") ?? "";
-      expect(setCookie).not.toContain("Secure");
+      expect(setCookie).toContain("Secure");
     });
   });
 });
@@ -285,29 +309,23 @@ describe("T-604: セキュリティレスポンスヘッダー仕様確認", () 
 // ============================================================
 // T-605: Worker グローバル try/catch
 // ============================================================
-describe("T-605: Worker グローバル try/catch", () => {
-  beforeAll(async () => {
-    await applyMigrationsAndSeed();
-  });
-
-  it("未知のルートは 404 を返す（クラッシュしない）", async () => {
-    const res = await workerFetch("/api/unknown-route");
-    expect(res.status).toBe(404);
-  });
-
-  it("ヘルスチェックが正常に動作する", async () => {
-    const res = await workerFetch("/api/health");
-    expect(res.status).toBe(200);
-    const body = await parseJsonResponse<{ status: string }>(res);
-    expect(body.status).toBe("ok");
-  });
-});
+// NOTE: 未知のルートの 404 とヘルスチェックはルーティング層のテスト。
+// SSR 移行後は Astro が処理するため、E2E テストと health.test.ts でカバー。
+// ここでは test/worker/health.test.ts に委譲する。
 
 // ============================================================
 // T-606: stocks テーブル UNIQUE INDEX による重複防止
 // ============================================================
 describe("T-606: UNIQUE INDEX による重複防止", () => {
-  const USER1 = TEST_USERS[0].id;
+  const USER1_ID = TEST_USERS[0].id;
+
+  function auth(userId: string): AuthContext {
+    return { userId };
+  }
+
+  function stockEnv(): StockEnv {
+    return { DB: env.DB };
+  }
 
   beforeAll(async () => {
     await applyMigrationsAndSeed();
@@ -315,16 +333,16 @@ describe("T-606: UNIQUE INDEX による重複防止", () => {
 
   beforeEach(async () => {
     await resetSeedData();
-    vi.mocked(sendOEmbedMessage).mockClear();
+    vi.clearAllMocks();
   });
 
   it("同一ユーザーが同一 URL を登録すると 409 DUPLICATE_STOCK", async () => {
     // シードデータに存在する SpeakerDeck URL
     const existingUrl = "https://speakerdeck.com/testuser/example-slide";
-    const res = await workerFetch("/api/stocks", "POST", {
-      body: { url: existingUrl },
-      headers: { "X-Test-User-Id": USER1 },
+    const request = createJsonRequest("/api/stocks", "POST", {
+      url: existingUrl,
     });
+    const res = await handleCreateStock(request, stockEnv(), auth(USER1_ID));
 
     expect(res.status).toBe(409);
     const body = await parseJsonResponse<{ code: string }>(res);
@@ -335,10 +353,8 @@ describe("T-606: UNIQUE INDEX による重複防止", () => {
     const USER2 = TEST_USERS[1].id;
     // USER1 のシードデータに存在する URL を USER2 で登録
     const url = "https://speakerdeck.com/testuser/example-slide";
-    const res = await workerFetch("/api/stocks", "POST", {
-      body: { url },
-      headers: { "X-Test-User-Id": USER2 },
-    });
+    const request = createJsonRequest("/api/stocks", "POST", { url });
+    const res = await handleCreateStock(request, stockEnv(), auth(USER2));
 
     expect(res.status).toBe(201);
   });

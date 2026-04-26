@@ -46,8 +46,7 @@ async function fetchWithTimeout(
     return res;
   } catch (e) {
     clearTimeout(timeoutId);
-    if (e instanceof PermanentError) throw e;
-    throw e; // AbortError 等は一時的エラーとしてリトライ対象
+    throw e;
   }
 }
 
@@ -171,7 +170,7 @@ export async function fetchGoogleSlidesMetadata(
   // embed URL は機械的に構築（常に成功）
   const embedUrl = `${canonicalUrl}/embed`;
 
-  // タイトル取得を試行（失敗しても status=ready）
+  // タイトル取得を試行（失敗しても stock 作成は続行）
   let title: string | null = null;
   try {
     const res = await fetchWithTimeout(canonicalUrl, MAX_HTML_RESPONSE_SIZE);
@@ -183,8 +182,8 @@ export async function fetchGoogleSlidesMetadata(
           match[1].replace(/ - Google (スライド|Slides)$/, "").trim() || null;
       }
     }
-  } catch {
-    // タイトル取得失敗は無視（embed URL があれば ready）
+  } catch (err) {
+    console.warn(JSON.stringify({ action: "google_slides_title_fetch_failed", canonicalUrl, error: String(err) }));
   }
 
   return {

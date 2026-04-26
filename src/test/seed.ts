@@ -54,7 +54,6 @@ export interface TestStock {
   author_name: string | null;
   thumbnail_url: string | null;
   embed_url: string | null;
-  status: "pending" | "ready" | "failed";
   created_at: string;
   updated_at: string;
 }
@@ -70,7 +69,6 @@ export const TEST_STOCKS: readonly TestStock[] = [
     author_name: "testuser",
     thumbnail_url: "https://speakerdeck.com/rails/active_storage/representations/example.jpg",
     embed_url: "https://speakerdeck.com/player/abc123",
-    status: "ready",
     created_at: "2025-01-10T00:00:00.000Z",
     updated_at: "2025-01-10T00:01:00.000Z",
   },
@@ -84,7 +82,6 @@ export const TEST_STOCKS: readonly TestStock[] = [
     author_name: "testuser",
     thumbnail_url: "https://www.docswell.com/slides/example/thumbnail.jpg",
     embed_url: "https://www.docswell.com/slide/example/embedded",
-    status: "ready",
     created_at: "2025-01-11T00:00:00.000Z",
     updated_at: "2025-01-11T00:01:00.000Z",
   },
@@ -98,7 +95,6 @@ export const TEST_STOCKS: readonly TestStock[] = [
     author_name: null,
     thumbnail_url: null,
     embed_url: "https://docs.google.com/presentation/d/1abc123/embed",
-    status: "ready",
     created_at: "2025-01-12T00:00:00.000Z",
     updated_at: "2025-01-12T00:01:00.000Z",
   },

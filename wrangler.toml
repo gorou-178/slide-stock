@@ -1,14 +1,12 @@
-name = "slide-stock-api"
+name = "slide-stock"
 main = "worker/index.ts"
 compatibility_date = "2025-02-14"
-
-# --- ルーティング ---
-# gorou.dev が Cloudflare ゾーンでないため Worker routes は使用不可。
-# 代わりに Pages の _redirects で /api/* を workers.dev へプロキシする。
+compatibility_flags = ["nodejs_compat"]
 
 # --- 環境変数 ---
 [vars]
 CALLBACK_URL = "https://slide-stock.gorou.dev/api/auth/callback"
+# SESSION_MAX_AGE = "604800"  — セッション有効期間（秒）、省略時 604800（7日）
 
 # --- Secrets（wrangler secret put で設定） ---
 # GOOGLE_CLIENT_ID     — Google OAuth Client ID
@@ -21,15 +19,5 @@ binding = "DB"
 database_name = "slide-stock-db"
 database_id = "44ece48f-84d2-4a02-8df4-470f3b2b6e23"
 
-# --- Queue ---
-# oEmbed メタデータ取得用 Queue（oembed-spec.md セクション 5.4）
-[[queues.producers]]
-queue = "oembed-fetch"
-binding = "OEMBED_QUEUE"
-
-[[queues.consumers]]
-queue = "oembed-fetch"
-max_batch_size = 2
-max_batch_timeout = 3
-max_retries = 3
-dead_letter_queue = "oembed-fetch-dlq"
+# ローカル開発: HTTPS 化が必要（__Host- Cookie の Secure 要件）
+# wrangler dev --local-protocol=https --https-cert-path=./localhost+2.pem --https-key-path=./localhost+2-key.pem

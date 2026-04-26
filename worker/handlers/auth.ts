@@ -1,5 +1,6 @@
+import { uuidv7 } from "uuidv7";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import type { Env } from "../index";
+import type { Env } from "../types";
 
 export interface AuthEnv extends Env {
   GOOGLE_CLIENT_ID: string;
@@ -43,8 +44,9 @@ function parseCookies(request: Request): Map<string, string> {
 async function createSessionCookie(
   userId: string,
   secret: string,
+  maxAge: number,
 ): Promise<string> {
-  const exp = Math.floor(Date.now() / 1000) + 604800; // 7日間
+  const exp = Math.floor(Date.now() / 1000) + maxAge;
   const payload = JSON.stringify({ uid: userId, exp });
   const payloadB64 = btoa(payload);
 
@@ -104,14 +106,11 @@ export async function handleLogin(
   authUrl.searchParams.set("state", state);
   authUrl.searchParams.set("prompt", "consent");
 
-  const isSecure = env.CALLBACK_URL.startsWith("https://");
-  const securePart = isSecure ? " Secure;" : "";
-
   const headers = new Headers();
   headers.set("Location", authUrl.toString());
   headers.append(
     "Set-Cookie",
-    `auth_state=${state}; HttpOnly;${securePart} SameSite=Lax; Max-Age=300; Path=/api`,
+    `__Host-auth_state=${state}; HttpOnly; Secure; SameSite=Lax; Max-Age=300; Path=/`,
   );
 
   return new Response(null, { status: 302, headers });
@@ -130,19 +129,16 @@ export async function handleCallback(
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
 
-  // 1. state 検証
   const cookies = parseCookies(request);
-  const authState = cookies.get("auth_state");
+  const authState = cookies.get("__Host-auth_state");
   if (!authState || authState !== state) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // 2. code 検証
   if (!code) {
     return Response.json({ error: "Bad Request" }, { status: 400 });
   }
 
-  // 3. Token 交換
   let tokenRes: Response;
   try {
     tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -166,7 +162,6 @@ export async function handleCallback(
 
   const tokenData = (await tokenRes.json()) as { id_token: string };
 
-  // 4. ID Token 検証
   const verify = deps.verifyIdToken ?? verifyGoogleIdToken;
   let claims: IdTokenClaims;
   try {
@@ -175,7 +170,6 @@ export async function handleCallback(
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // 5. ユーザー upsert（auth-spec.md セクション 6）
   let userId: string;
   const existing = await env.DB.prepare(
     "SELECT id FROM users WHERE google_sub = ?",
@@ -189,7 +183,7 @@ export async function handleCallback(
       .bind(claims.email, claims.name, userId)
       .run();
   } else {
-    userId = crypto.randomUUID();
+    userId = uuidv7();
     await env.DB.prepare(
       "INSERT INTO users (id, google_sub, email, name, created_at) VALUES (?, ?, ?, ?, ?)",
     )
@@ -199,21 +193,19 @@ export async function handleCallback(
 
   console.log(JSON.stringify({ action: "auth_callback_success", userId }));
 
-  // 6. セッション Cookie 発行
-  const sessionValue = await createSessionCookie(userId, env.SESSION_SECRET);
-
-  const isSecure = env.CALLBACK_URL.startsWith("https://");
-  const securePart = isSecure ? " Secure;" : "";
+  const parsed = Number(env.SESSION_MAX_AGE);
+  const maxAge = Number.isFinite(parsed) && parsed > 0 ? parsed : 604800;
+  const sessionValue = await createSessionCookie(userId, env.SESSION_SECRET, maxAge);
 
   const headers = new Headers();
   headers.set("Location", "/");
   headers.append(
     "Set-Cookie",
-    `session=${sessionValue}; HttpOnly;${securePart} SameSite=Lax; Path=/api; Max-Age=604800`,
+    `__Host-session=${sessionValue}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`,
   );
   headers.append(
     "Set-Cookie",
-    "auth_state=; HttpOnly; SameSite=Lax; Path=/api; Max-Age=0",
+    "__Host-auth_state=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
   );
 
   return new Response(null, { status: 302, headers });
@@ -225,16 +217,13 @@ export async function handleCallback(
  */
 export async function handleLogout(
   _request: Request,
-  env: AuthEnv,
+  _env: AuthEnv,
 ): Promise<Response> {
-  const isSecure = env.CALLBACK_URL.startsWith("https://");
-  const securePart = isSecure ? " Secure;" : "";
-
   return Response.json(
     { ok: true },
     {
       headers: {
-        "Set-Cookie": `session=; HttpOnly;${securePart} SameSite=Lax; Path=/api; Max-Age=0`,
+        "Set-Cookie": `__Host-session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`,
       },
     },
   );

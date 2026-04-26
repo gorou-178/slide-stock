@@ -36,7 +36,7 @@ function generateSQL(): string {
   // Insert stocks
   for (const stock of TEST_STOCKS) {
     statements.push(
-      `INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, title, author_name, thumbnail_url, embed_url, status, created_at, updated_at) VALUES (${escapeSQL(stock.id)}, ${escapeSQL(stock.user_id)}, ${escapeSQL(stock.original_url)}, ${escapeSQL(stock.canonical_url)}, ${escapeSQL(stock.provider)}, ${escapeSQL(stock.title)}, ${escapeSQL(stock.author_name)}, ${escapeSQL(stock.thumbnail_url)}, ${escapeSQL(stock.embed_url)}, ${escapeSQL(stock.status)}, ${escapeSQL(stock.created_at)}, ${escapeSQL(stock.updated_at)});`
+      `INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, title, author_name, thumbnail_url, embed_url, created_at, updated_at) VALUES (${escapeSQL(stock.id)}, ${escapeSQL(stock.user_id)}, ${escapeSQL(stock.original_url)}, ${escapeSQL(stock.canonical_url)}, ${escapeSQL(stock.provider)}, ${escapeSQL(stock.title)}, ${escapeSQL(stock.author_name)}, ${escapeSQL(stock.thumbnail_url)}, ${escapeSQL(stock.embed_url)}, ${escapeSQL(stock.created_at)}, ${escapeSQL(stock.updated_at)});`
     );
   }
 

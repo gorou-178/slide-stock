@@ -1,3 +1,0 @@
-# Cloudflare Pages routing
-# /stocks/:id は Pages Function (functions/stocks/[id].ts) が処理する
-# /api/* は Pages Function (functions/api/[[path]].ts) が処理する

@@ -2,24 +2,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   handleLogin,
   handleCallback,
+  handleLogout,
   type AuthEnv,
   type AuthDeps,
 } from "./auth";
 
 /**
- * T-507: OIDC ログインエンドポイントのユニットテスト
+ * T-507 / T-751: OIDC ログインエンドポイントのユニットテスト
  *
  * 仕様: docs/auth-spec.md セクション 3, 4
+ *      docs/adr/006-cookie-security.md
  *
  * テスト対象:
  * - GET /api/auth/login: Google 認証 URL へのリダイレクト検証
  * - GET /api/auth/callback: state 照合・Token 交換 mock・セッション Cookie 発行検証
+ * - POST /api/auth/logout: セッション Cookie 削除
  */
 
 // --- テスト用定数 ---
 
 function createMockDB(): D1Database {
-  const store = new Map<string, Record<string, unknown>>();
   const mockPrepare = (query: string) => {
     return {
       bind: (..._params: unknown[]) => ({
@@ -38,6 +40,7 @@ function createMockDB(): D1Database {
   return { prepare: mockPrepare } as unknown as D1Database;
 }
 
+// http の CALLBACK_URL でも Secure フラグが常時付与されることを確認するため意図的に http を使用
 const TEST_ENV: AuthEnv = {
   DB: createMockDB(),
   TEST_MODE: "false",
@@ -45,6 +48,11 @@ const TEST_ENV: AuthEnv = {
   GOOGLE_CLIENT_SECRET: "test-client-secret",
   SESSION_SECRET: "a".repeat(64), // 32バイト hex
   CALLBACK_URL: "http://localhost:4321/api/auth/callback",
+};
+
+const TEST_ENV_WITH_MAX_AGE: AuthEnv = {
+  ...TEST_ENV,
+  SESSION_MAX_AGE: "3600",
 };
 
 const GOOGLE_AUTH_BASE = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -134,7 +142,7 @@ describe("GET /api/auth/login", () => {
     expect(state).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("auth_state Cookie に state 値がセットされる", async () => {
+  it("__Host-auth_state Cookie に state 値がセットされる", async () => {
     const request = createRequest("/api/auth/login");
     const response = await handleLogin(request, TEST_ENV);
 
@@ -142,18 +150,28 @@ describe("GET /api/auth/login", () => {
     const state = location.searchParams.get("state")!;
     const cookies = parseSetCookies(response);
 
-    expect(cookies.get("auth_state")).toBe(state);
+    expect(cookies.get("__Host-auth_state")).toBe(state);
   });
 
-  it("auth_state Cookie の属性が正しい（HttpOnly, SameSite=Lax, Max-Age=300）", async () => {
+  it("__Host-auth_state Cookie の属性が正しい（HttpOnly, Secure, SameSite=Lax, Max-Age=300, Path=/）", async () => {
     const request = createRequest("/api/auth/login");
     const response = await handleLogin(request, TEST_ENV);
 
-    const attrs = getCookieAttributes(response, "auth_state");
+    const attrs = getCookieAttributes(response, "__Host-auth_state");
     expect(attrs["httponly"]).toBe("true");
+    expect(attrs["secure"]).toBe("true");
     expect(attrs["samesite"]).toBe("Lax");
     expect(attrs["max-age"]).toBe("300");
-    expect(attrs["path"]).toBe("/api");
+    expect(attrs["path"]).toBe("/");
+  });
+
+  it("__Host-auth_state Cookie の Secure フラグは CALLBACK_URL が http でも付与される（ADR-006）", async () => {
+    // CALLBACK_URL が http:// でも Secure を常時付与する（条件分岐廃止）
+    const request = createRequest("/api/auth/login");
+    const response = await handleLogin(request, TEST_ENV);
+
+    const attrs = getCookieAttributes(response, "__Host-auth_state");
+    expect(attrs["secure"]).toBe("true");
   });
 
   it("2 回呼ぶと異なる state が生成される", async () => {
@@ -200,17 +218,17 @@ describe("GET /api/auth/callback", () => {
   // --- state 検証 ---
 
   describe("state 検証", () => {
-    it("state が auth_state Cookie と一致しない場合、403 を返す", async () => {
+    it("state が __Host-auth_state Cookie と一致しない場合、403 を返す", async () => {
       const request = createRequest(
         `/api/auth/callback?code=valid-code&state=wrong-state`,
-        { cookie: `auth_state=${VALID_STATE}` },
+        { cookie: `__Host-auth_state=${VALID_STATE}` },
       );
       const response = await handleCallback(request, TEST_ENV);
 
       expect(response.status).toBe(403);
     });
 
-    it("auth_state Cookie が無い場合、403 を返す", async () => {
+    it("__Host-auth_state Cookie が無い場合、403 を返す", async () => {
       const request = createRequest(
         `/api/auth/callback?code=valid-code&state=${VALID_STATE}`,
       );
@@ -226,7 +244,7 @@ describe("GET /api/auth/callback", () => {
     it("code パラメータが無い場合、400 を返す", async () => {
       const request = createRequest(
         `/api/auth/callback?state=${VALID_STATE}`,
-        { cookie: `auth_state=${VALID_STATE}` },
+        { cookie: `__Host-auth_state=${VALID_STATE}` },
       );
       const response = await handleCallback(request, TEST_ENV);
 
@@ -236,7 +254,7 @@ describe("GET /api/auth/callback", () => {
     it("code パラメータが空文字の場合、400 を返す", async () => {
       const request = createRequest(
         `/api/auth/callback?code=&state=${VALID_STATE}`,
-        { cookie: `auth_state=${VALID_STATE}` },
+        { cookie: `__Host-auth_state=${VALID_STATE}` },
       );
       const response = await handleCallback(request, TEST_ENV);
 
@@ -274,7 +292,7 @@ describe("GET /api/auth/callback", () => {
 
       const request = createRequest(
         `/api/auth/callback?code=auth-code-123&state=${VALID_STATE}`,
-        { cookie: `auth_state=${VALID_STATE}` },
+        { cookie: `__Host-auth_state=${VALID_STATE}` },
       );
 
       try {
@@ -314,7 +332,7 @@ describe("GET /api/auth/callback", () => {
      * 正常フロー全体をモック付きで実行するヘルパー。
      * Token 交換は fetch モック、ID Token 検証は DI で差し替える。
      */
-    async function executeSuccessfulCallback(): Promise<Response> {
+    async function executeSuccessfulCallback(env: AuthEnv = TEST_ENV): Promise<Response> {
       const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
 
       // Token 交換レスポンス
@@ -333,7 +351,7 @@ describe("GET /api/auth/callback", () => {
 
       const request = createRequest(
         `/api/auth/callback?code=auth-code-123&state=${VALID_STATE}`,
-        { cookie: `auth_state=${VALID_STATE}` },
+        { cookie: `__Host-auth_state=${VALID_STATE}` },
       );
 
       const deps: AuthDeps = {
@@ -345,7 +363,7 @@ describe("GET /api/auth/callback", () => {
       };
 
       try {
-        return await handleCallback(request, TEST_ENV, deps);
+        return await handleCallback(request, env, deps);
       } finally {
         globalThis.fetch = originalFetch;
       }
@@ -362,16 +380,16 @@ describe("GET /api/auth/callback", () => {
       expect(location).toBe("/");
     });
 
-    it("session Cookie が発行される", async () => {
+    it("__Host-session Cookie が発行される", async () => {
       const response = await executeSuccessfulCallback();
       const cookies = parseSetCookies(response);
-      expect(cookies.has("session")).toBe(true);
+      expect(cookies.has("__Host-session")).toBe(true);
     });
 
-    it("session Cookie が {payload}.{signature} 形式", async () => {
+    it("__Host-session Cookie が {payload}.{signature} 形式", async () => {
       const response = await executeSuccessfulCallback();
       const cookies = parseSetCookies(response);
-      const session = cookies.get("session")!;
+      const session = cookies.get("__Host-session")!;
       const parts = session.split(".");
       expect(parts.length).toBe(2);
 
@@ -381,29 +399,80 @@ describe("GET /api/auth/callback", () => {
       expect(payload).toHaveProperty("exp");
     });
 
-    it("session Cookie の属性が正しい", async () => {
+    it("__Host-session Cookie の属性が正しい（HttpOnly, Secure, SameSite=Lax, Path=/, Max-Age=604800）", async () => {
       const response = await executeSuccessfulCallback();
-      const attrs = getCookieAttributes(response, "session");
+      const attrs = getCookieAttributes(response, "__Host-session");
 
       expect(attrs["httponly"]).toBe("true");
+      expect(attrs["secure"]).toBe("true");
       expect(attrs["samesite"]).toBe("Lax");
-      expect(attrs["path"]).toBe("/api");
+      expect(attrs["path"]).toBe("/");
       expect(attrs["max-age"]).toBe("604800");
     });
 
-    it("session Cookie の Secure 属性は CALLBACK_URL のスキームに依存", async () => {
-      // HTTP の場合（ローカル開発）→ Secure なし
-      const response = await executeSuccessfulCallback();
-      const attrs = getCookieAttributes(response, "session");
-      expect(attrs["secure"]).toBeUndefined();
-
-      // TODO: HTTPS の場合のテストは本番用 Env で別途実施
+    it("__Host-session Cookie の Secure フラグは CALLBACK_URL が http でも付与される（ADR-006）", async () => {
+      // CALLBACK_URL が http:// でも Secure を常時付与する（条件分岐廃止）
+      const response = await executeSuccessfulCallback(TEST_ENV);
+      const attrs = getCookieAttributes(response, "__Host-session");
+      expect(attrs["secure"]).toBe("true");
     });
 
-    it("auth_state Cookie が削除される（Max-Age=0）", async () => {
+    it("__Host-auth_state Cookie が削除される（Max-Age=0, Path=/）", async () => {
       const response = await executeSuccessfulCallback();
-      const attrs = getCookieAttributes(response, "auth_state");
+      const attrs = getCookieAttributes(response, "__Host-auth_state");
       expect(attrs["max-age"]).toBe("0");
+      expect(attrs["path"]).toBe("/");
+    });
+
+    // --- SESSION_MAX_AGE ---
+
+    describe("SESSION_MAX_AGE による Max-Age カスタマイズ", () => {
+      it("SESSION_MAX_AGE が未設定の場合、Max-Age はデフォルト値（604800）", async () => {
+        const response = await executeSuccessfulCallback(TEST_ENV);
+        const attrs = getCookieAttributes(response, "__Host-session");
+        expect(attrs["max-age"]).toBe("604800");
+      });
+
+      it("SESSION_MAX_AGE='3600' の場合、Cookie Max-Age が 3600 になる", async () => {
+        const response = await executeSuccessfulCallback(TEST_ENV_WITH_MAX_AGE);
+        const attrs = getCookieAttributes(response, "__Host-session");
+        expect(attrs["max-age"]).toBe("3600");
+      });
+
+      it("SESSION_MAX_AGE='3600' の場合、JWT exp が Max-Age と同期される", async () => {
+        const beforeSeconds = Math.floor(Date.now() / 1000);
+        const response = await executeSuccessfulCallback(TEST_ENV_WITH_MAX_AGE);
+        const afterSeconds = Math.floor(Date.now() / 1000);
+
+        const cookies = parseSetCookies(response);
+        const session = cookies.get("__Host-session")!;
+        const [payloadB64] = session.split(".");
+        const payload = JSON.parse(atob(payloadB64));
+
+        expect(payload.exp).toBeGreaterThanOrEqual(beforeSeconds + 3600);
+        expect(payload.exp).toBeLessThanOrEqual(afterSeconds + 3600);
+      });
+
+      it("SESSION_MAX_AGE='0'（無効値）の場合、Max-Age はデフォルト値（604800）", async () => {
+        const env: AuthEnv = { ...TEST_ENV, SESSION_MAX_AGE: "0" };
+        const response = await executeSuccessfulCallback(env);
+        const attrs = getCookieAttributes(response, "__Host-session");
+        expect(attrs["max-age"]).toBe("604800");
+      });
+
+      it("SESSION_MAX_AGE='-1'（負値）の場合、Max-Age はデフォルト値（604800）", async () => {
+        const env: AuthEnv = { ...TEST_ENV, SESSION_MAX_AGE: "-1" };
+        const response = await executeSuccessfulCallback(env);
+        const attrs = getCookieAttributes(response, "__Host-session");
+        expect(attrs["max-age"]).toBe("604800");
+      });
+
+      it("SESSION_MAX_AGE='invalid'（非数値）の場合、Max-Age はデフォルト値（604800）", async () => {
+        const env: AuthEnv = { ...TEST_ENV, SESSION_MAX_AGE: "invalid" };
+        const response = await executeSuccessfulCallback(env);
+        const attrs = getCookieAttributes(response, "__Host-session");
+        expect(attrs["max-age"]).toBe("604800");
+      });
     });
   });
 
@@ -421,7 +490,7 @@ describe("GET /api/auth/callback", () => {
 
       const request = createRequest(
         `/api/auth/callback?code=auth-code-123&state=${VALID_STATE}`,
-        { cookie: `auth_state=${VALID_STATE}` },
+        { cookie: `__Host-auth_state=${VALID_STATE}` },
       );
 
       try {
@@ -441,5 +510,44 @@ describe("GET /api/auth/callback", () => {
       // ここではハンドラが DB 操作を行うインターフェースの存在を確認するのみ。
       expect(true).toBe(true);
     });
+  });
+});
+
+// ============================================================
+// POST /api/auth/logout
+// ============================================================
+describe("POST /api/auth/logout", () => {
+  function createLogoutRequest(): Request {
+    return new Request("http://localhost:4321/api/auth/logout", {
+      method: "POST",
+    });
+  }
+
+  it("200 を返す", async () => {
+    const response = await handleLogout(createLogoutRequest(), TEST_ENV);
+    expect(response.status).toBe(200);
+  });
+
+  it("__Host-session Cookie が削除される（Max-Age=0）", async () => {
+    const response = await handleLogout(createLogoutRequest(), TEST_ENV);
+    const attrs = getCookieAttributes(response, "__Host-session");
+    expect(attrs["max-age"]).toBe("0");
+  });
+
+  it("__Host-session Cookie の属性が正しい（HttpOnly, Secure, SameSite=Lax, Path=/）", async () => {
+    const response = await handleLogout(createLogoutRequest(), TEST_ENV);
+    const attrs = getCookieAttributes(response, "__Host-session");
+
+    expect(attrs["httponly"]).toBe("true");
+    expect(attrs["secure"]).toBe("true");
+    expect(attrs["samesite"]).toBe("Lax");
+    expect(attrs["path"]).toBe("/");
+  });
+
+  it("Secure フラグは CALLBACK_URL が http でも付与される（ADR-006）", async () => {
+    // TEST_ENV の CALLBACK_URL は http:// だが Secure は常時付与される
+    const response = await handleLogout(createLogoutRequest(), TEST_ENV);
+    const attrs = getCookieAttributes(response, "__Host-session");
+    expect(attrs["secure"]).toBe("true");
   });
 });

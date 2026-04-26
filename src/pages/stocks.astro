@@ -1,4 +1,5 @@
 ---
+export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import URLInputForm from '../components/URLInputForm.astro';
 import StockList from '../components/StockList.astro';
@@ -10,7 +11,7 @@ import StockList from '../components/StockList.astro';
 </BaseLayout>
 
 <script>
-  import { fetchMe, fetchStocks, fetchStock, createStock, type StockItem } from '../lib/api-client';
+  import { fetchMe, fetchStocks, createStock, type StockItem } from '../lib/api-client';
 
   const PROVIDER_LABELS: Record<string, string> = {
     speakerdeck: 'SpeakerDeck',
@@ -34,22 +35,10 @@ import StockList from '../components/StockList.astro';
     const titleEl = document.createElement('h2');
     titleEl.className = 'stock-card-title';
 
-    if (stock.status === 'pending') {
-      const span = document.createElement('span');
-      span.className = 'stock-card-pending';
-      span.textContent = 'メタデータ取得中...';
-      titleEl.appendChild(span);
-    } else if (stock.status === 'failed') {
-      const span = document.createElement('span');
-      span.className = 'stock-card-failed';
-      span.textContent = 'メタデータの取得に失敗しました';
-      titleEl.appendChild(span);
-    } else {
-      const link = document.createElement('a');
-      link.href = `/stocks/${stock.id}`;
-      link.textContent = stock.title || 'タイトルなし';
-      titleEl.appendChild(link);
-    }
+    const link = document.createElement('a');
+    link.href = `/stocks/${stock.id}`;
+    link.textContent = stock.title || 'タイトルなし';
+    titleEl.appendChild(link);
 
     const badge = document.createElement('span');
     badge.className = `badge badge-${stock.provider}`;
@@ -95,55 +84,6 @@ import StockList from '../components/StockList.astro';
     return article;
   }
 
-  // --- ポーリング ---
-
-  const POLL_INTERVAL_MS = 3000;
-  const MAX_POLL_COUNT = 40; // 最大2分で停止
-  const pendingStockIds = new Set<string>();
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
-  let pollCount = 0;
-
-  function updateStockCard(stock: StockItem) {
-    const card = stockList.querySelector(`[data-stock-id="${stock.id}"]`);
-    if (!card) return;
-    const newCard = createStockCard(stock);
-    card.replaceWith(newCard);
-  }
-
-  async function pollPendingStocks() {
-    pollCount++;
-    const ids = [...pendingStockIds];
-
-    for (const id of ids) {
-      try {
-        const stock = await fetchStock(id);
-        if (stock.status !== 'pending') {
-          pendingStockIds.delete(id);
-          updateStockCard(stock);
-        }
-      } catch {
-        // エラー時はそのまま次回ポーリングに任せる
-      }
-    }
-
-    if (pendingStockIds.size === 0 || pollCount >= MAX_POLL_COUNT) {
-      stopPolling();
-    }
-  }
-
-  function startPolling() {
-    if (pollTimer || pendingStockIds.size === 0) return;
-    pollCount = 0;
-    pollTimer = setInterval(pollPendingStocks, POLL_INTERVAL_MS);
-  }
-
-  function stopPolling() {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
-    }
-  }
-
   // --- 初期化 ---
 
   let nextCursor: string | null = null;
@@ -185,13 +125,6 @@ import StockList from '../components/StockList.astro';
           stockList.appendChild(createStockCard(stock));
         }
       }
-
-      for (const stock of data.items) {
-        if (stock.status === 'pending') {
-          pendingStockIds.add(stock.id);
-        }
-      }
-      startPolling();
 
       nextCursor = data.next_cursor;
       loadMoreContainer.hidden = !data.has_more;
@@ -244,10 +177,6 @@ import StockList from '../components/StockList.astro';
         stockList.appendChild(createStockCard(stock));
       }
       urlInput.value = '';
-      if (stock.status === 'pending') {
-        pendingStockIds.add(stock.id);
-        startPolling();
-      }
     } catch (err: unknown) {
       if (err && typeof err === 'object' && 'status' in err) {
         const apiErr = err as { status: number; message: string };

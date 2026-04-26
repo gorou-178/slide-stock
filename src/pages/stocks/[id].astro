@@ -1,0 +1,243 @@
+---
+export const prerender = false;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import MemoEditor from '../../components/MemoEditor.astro';
+---
+
+<BaseLayout title="ストック詳細">
+  <!-- ローディング -->
+  <div id="detail-loading" class="loading-container">
+    <div class="loading-spinner" role="status" aria-label="読み込み中">
+      <span class="sr-only">読み込み中...</span>
+    </div>
+  </div>
+
+  <!-- エラー（404等） -->
+  <div id="detail-error" hidden>
+    <a href="/stocks" class="back-link">&larr; 一覧に戻る</a>
+    <p id="detail-error-message">ストックが見つかりません</p>
+  </div>
+
+  <!-- コンテンツ -->
+  <div id="detail-content" hidden>
+    <a href="/stocks" class="back-link">&larr; 一覧に戻る</a>
+
+    <header class="detail-header">
+      <span id="detail-badge" class="badge"></span>
+      <h1 id="detail-title" class="detail-title"></h1>
+      <div class="detail-meta">
+        <span id="detail-author"></span>
+      </div>
+    </header>
+
+    <div id="detail-embed"></div>
+
+    <div class="detail-link">
+      <a id="detail-original-url" href="#" target="_blank" rel="noopener noreferrer" class="btn-text">
+        元のスライドを開く <span aria-hidden="true">↗</span>
+      </a>
+    </div>
+
+    <MemoEditor />
+
+    <section class="danger-zone" aria-label="危険な操作">
+      <button id="delete-btn" type="button" class="btn-danger">
+        このストックを削除
+      </button>
+    </section>
+  </div>
+</BaseLayout>
+
+<script>
+  import { fetchMe, fetchStock, saveMemo, deleteStock, ApiError } from '../../lib/api-client';
+
+  const PROVIDER_LABELS: Record<string, string> = {
+    speakerdeck: 'SpeakerDeck',
+    docswell: 'Docswell',
+    google_slides: 'Google Slides',
+  };
+
+  const detailLoading = document.getElementById('detail-loading')!;
+  const detailError = document.getElementById('detail-error')!;
+  const detailErrorMessage = document.getElementById('detail-error-message')!;
+  const detailContent = document.getElementById('detail-content')!;
+  const detailBadge = document.getElementById('detail-badge')!;
+  const detailTitle = document.getElementById('detail-title')!;
+  const detailAuthor = document.getElementById('detail-author')!;
+  const detailEmbed = document.getElementById('detail-embed')!;
+  const detailOriginalUrl = document.getElementById('detail-original-url') as HTMLAnchorElement;
+
+  const memoTextarea = document.getElementById('memo-text') as HTMLTextAreaElement;
+  const memoCharCount = document.getElementById('memo-char-count')!;
+  const memoSaveBtn = document.getElementById('memo-save-btn') as HTMLButtonElement;
+  const memoStatus = document.getElementById('memo-status')!;
+  const deleteBtn = document.getElementById('delete-btn') as HTMLButtonElement;
+
+  // URL からストック ID を取得（/stocks/:id）
+  const pathSegments = window.location.pathname.replace(/\/$/, '').split('/');
+  const stockId = pathSegments[pathSegments.length - 1];
+
+  function updateCharCount() {
+    const count = memoTextarea.value.length;
+    memoCharCount.textContent = `${count.toLocaleString()} / 10,000`;
+    memoCharCount.className = 'char-count';
+    if (count > 10000) {
+      memoCharCount.classList.add('error');
+    } else if (count > 9500) {
+      memoCharCount.classList.add('warning');
+    }
+  }
+
+  function showError(message: string) {
+    detailLoading.hidden = true;
+    detailContent.hidden = true;
+    detailError.hidden = false;
+    detailErrorMessage.textContent = message;
+  }
+
+  async function init() {
+    if (!stockId) {
+      showError('ストックが見つかりません');
+      return;
+    }
+
+    // 認証チェック
+    const user = await fetchMe().catch(() => null);
+    if (!user) {
+      window.location.href = '/login';
+      return;
+    }
+
+    // ストック取得
+    try {
+      const stock = await fetchStock(stockId);
+
+      // ヘッダー
+      detailBadge.className = `badge badge-${stock.provider}`;
+      detailBadge.textContent = PROVIDER_LABELS[stock.provider] || stock.provider;
+
+      detailTitle.textContent = stock.title || 'タイトルなし';
+
+      if (stock.author_name) {
+        detailAuthor.textContent = stock.author_name;
+      }
+
+      // Embed
+      if (stock.embed_url) {
+        const iframe = document.createElement('iframe');
+        iframe.src = stock.embed_url;
+        iframe.title = stock.title || 'スライド';
+        iframe.className = 'embed-iframe';
+        iframe.loading = 'lazy';
+        iframe.allowFullscreen = true;
+        iframe.sandbox.add('allow-scripts', 'allow-same-origin', 'allow-popups');
+
+        const viewer = document.createElement('div');
+        viewer.className = 'embed-viewer';
+        viewer.dataset.provider = stock.provider;
+        viewer.appendChild(iframe);
+        detailEmbed.appendChild(viewer);
+      } else {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'embed-viewer';
+        placeholder.innerHTML = '<div class="embed-placeholder"><p>スライドの読み込みができません</p></div>';
+        detailEmbed.appendChild(placeholder);
+      }
+
+      // 元URL
+      detailOriginalUrl.href = stock.original_url;
+
+      // メモ
+      if (stock.memo_text) {
+        memoTextarea.value = stock.memo_text;
+      }
+      updateCharCount();
+
+      detailLoading.hidden = true;
+      detailContent.hidden = false;
+
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
+        if (err.status === 403) {
+          window.location.href = '/error?code=403';
+          return;
+        }
+        if (err.status === 404) {
+          showError('ストックが見つかりません');
+          return;
+        }
+        if (err.status >= 500) {
+          window.location.href = '/error?code=500';
+          return;
+        }
+        showError(err.message);
+      } else {
+        showError('サーバーに接続できません。ネットワーク接続を確認してください。');
+      }
+    }
+  }
+
+  // 文字数カウント
+  memoTextarea.addEventListener('input', updateCharCount);
+
+  // メモ保存
+  memoSaveBtn.addEventListener('click', async () => {
+    const text = memoTextarea.value.trim();
+    if (!text) {
+      memoStatus.textContent = 'メモの内容を入力してください';
+      memoStatus.className = 'memo-status error';
+      return;
+    }
+
+    memoSaveBtn.disabled = true;
+    memoSaveBtn.textContent = '保存中...';
+    memoStatus.textContent = '';
+
+    try {
+      await saveMemo(stockId, text);
+      memoStatus.textContent = '保存しました';
+      memoStatus.className = 'memo-status success';
+      setTimeout(() => {
+        memoStatus.textContent = '';
+      }, 3000);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
+        memoStatus.textContent = err.message;
+      } else {
+        memoStatus.textContent = 'サーバーに接続できません';
+      }
+      memoStatus.className = 'memo-status error';
+    } finally {
+      memoSaveBtn.disabled = false;
+      memoSaveBtn.textContent = '保存';
+    }
+  });
+
+  // 削除
+  deleteBtn.addEventListener('click', async () => {
+    if (!window.confirm('このストックを削除しますか？この操作は取り消せません。')) {
+      return;
+    }
+
+    try {
+      await deleteStock(stockId);
+      window.location.href = '/stocks';
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        alert(err.message);
+      } else {
+        alert('サーバーに接続できません。ネットワーク接続を確認してください。');
+      }
+    }
+  });
+
+  init();
+</script>
