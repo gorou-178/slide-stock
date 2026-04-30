@@ -27,7 +27,7 @@ Astro（TypeScript）で構築し、Cloudflare Pages にデプロイする。
 
 | パス | ページ | 認証 | 説明 |
 |------|--------|------|------|
-| `/` | トップページ | 不要 | 認証済み → `/stocks` リダイレクト、未認証 → ログイン案内 |
+| `/` | ランディングページ | 不要 | 静的 LP（認証チェックなし）。詳細は [landing-spec.md](landing-spec.md) を参照 |
 | `/login` | ログインページ | 不要 | Google Login ボタン |
 | `/stocks` | 一覧画面 | 必須 | URL 入力フォーム + ストック一覧 |
 | `/stocks/[id]` | 詳細画面 | 必須 | embed 表示 + メモ編集 |
@@ -35,8 +35,8 @@ Astro（TypeScript）で構築し、Cloudflare Pages にデプロイする。
 ### 認証リダイレクト
 
 - **未認証ユーザーが `/stocks` または `/stocks/[id]` にアクセス**: `/login` にリダイレクト
-- **認証済みユーザーが `/` にアクセス**: `/stocks` にリダイレクト
 - **認証済みユーザーが `/login` にアクセス**: `/stocks` にリダイレクト
+- **`/`（ランディング）は認証チェックを行わない**: 認証済みユーザーも未認証ユーザーも同じ静的 LP を見る。LP 上の `/stocks` CTA はクリック後に `/stocks` 側で認証チェックされる（未認証なら `/login` にリダイレクト）
 
 認証状態の判定はクライアントサイド JS で行う:
 1. `GET /api/me` を呼び出し
@@ -106,8 +106,16 @@ src/
   <main>
     <slot />  <!-- ページ固有のコンテンツ -->
   </main>
-  <footer>
-    <p>&copy; 2025 Slide Stock</p>
+  <footer class="site-footer">
+    <nav class="footer-nav" aria-label="フッターナビゲーション">
+      <a href="/privacy">プライバシーポリシー</a>
+      <a href="/terms">利用規約</a>
+      <a href="https://github.com/gorou-178/slide-stock" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </nav>
+    <p class="footer-meta">
+      &copy; <span class="current-year">2026</span> Slide Stock
+      <span class="footer-version" aria-label="バージョン">v{BUILD_VERSION}</span>
+    </p>
   </footer>
 </body>
 </html>
@@ -149,28 +157,11 @@ src/
 
 ### 5.1 トップページ（`/` — index.astro）
 
-**目的:** 認証状態に応じた振り分け。
+**目的:** サービスの紹介と CTA を提供する静的ランディングページ。
 
-**レイアウト:** BaseLayout（`showNavbar: false`）
+詳細は [landing-spec.md](landing-spec.md) を参照。本仕様書では `/login` 以降のアプリケーション UI のみ定義する。
 
-**動作:**
-1. クライアント JS で `GET /api/me` を呼び出し
-2. 200 → `window.location.href = "/stocks"` にリダイレクト
-3. 401 → ログイン案内を表示
-
-**未認証時の表示:**
-
-```html
-<div class="landing">
-  <h1>Slide Stock</h1>
-  <p>SpeakerDeck / Docswell / Google Slides のスライドを<br>URL入力だけでストックできるサービスです。</p>
-  <a href="/login" class="btn-primary">ログインして始める</a>
-</div>
-```
-
-**スタイル:**
-- 画面中央に垂直・水平中央配置
-- サービス説明テキストは `max-width: 480px`
+> **設計判断:** 旧仕様では `/` で認証チェックして振り分ける設計だったが、シンプルさ・CDN キャッシュ可能性・パフォーマンスを優先し、`/` は認証チェックなしの静的 LP に統一した。
 
 ### 5.2 ログインページ（`/login` — login.astro）
 
@@ -275,17 +266,55 @@ src/
 1. フォーム submit イベントを preventDefault
 2. 送信ボタンを disabled にし「追加中...」に変更
 3. POST /api/stocks { url: inputValue }
-4. 成功（201）→ 一覧の先頭にカードを追加、フォームをリセット
-5. エラー（400）→ #url-error にエラーメッセージ（API の error フィールド）を表示
-6. エラー（409）→ 「このスライドは既にストック済みです」を表示
-7. エラー（401）→ /login にリダイレクト
-8. 送信ボタンを元に戻す
+   ※ 同期モデル: サーバーは oEmbed 取得まで完了させてから 201 を返す
+4. 3 秒経過後にフォーム下に「スライド情報を取得しています...」と進捗テキスト表示（aria-live="polite"）
+5. 成功（201）→ 完成済みのストックカード（title, author_name, embed_url 等が揃った状態）を一覧の先頭に追加、フォームをリセット
+6. エラー（400 INVALID_URL / UNSUPPORTED_PROVIDER）→ #url-error にエラーメッセージ（API の error フィールド）を表示
+7. エラー（409 DUPLICATE）→ 「このスライドは既にストック済みです」を表示
+8. エラー（502 / 504 UPSTREAM_FAILURE）→ 「プロバイダから応答がありません。時間をおいて再度お試しください。」を表示。入力値はフォームに保持
+9. エラー（401）→ /login にリダイレクト
+10. クライアント側タイムアウト 15 秒（サーバー側 12 秒 + バッファ）で「タイムアウトしました。もう一度お試しください。」を表示
+11. 送信ボタンを元に戻す
 ```
+
+> **設計判断（同期モデル）:** ストック登録は POST /api/stocks のリクエスト内で oEmbed 取得まで完了する同期モデルとする。
+> oEmbed 取得が失敗（指数バックオフ 3 回リトライ後も失敗）した場合は DB ロールバックでストックは作成せず、エラーレスポンスを返す。
+> これにより `pending` / `failed` 状態がそもそも存在しなくなり、ポーリング・再試行 UI も不要になる。
+> 詳細は oembed-spec.md / stock-api-spec.md を参照（**両仕様も同期モデルに更新が必要 — TODO**）。
 
 **バリデーションエラーの表示:**
 - `#url-error` 要素にテキストを設定し `hidden` 属性を除去
 - テキスト色: 赤系（`var(--color-error)`）
-- 次の入力開始時にエラーを非表示に戻す（`input` イベントで `hidden` を付与）
+- フォーム再送信時にエラーを非表示に戻す（誤って入力 1 文字目で消すと、ユーザーがエラー内容を読む前に消えてしまうため `submit` イベント発火時にリセット）
+
+**クライアント側プロバイダ検出（パスト即時フィードバック）:**
+
+URL 入力時または貼り付け時、クライアント側で正規表現でプロバイダを検出し、ユーザーに即時フィードバックを返す。同期 oEmbed 取得の 1-10 秒の待機体験を「サービスが認識した」確信に変える設計。
+
+```html
+<form id="url-input-form" ...>
+  <div class="input-group">
+    <input id="slide-url" ... />
+    <button type="submit" ...>追加</button>
+  </div>
+  <div id="url-detect" class="url-detect" hidden>
+    <span class="url-detect-check" aria-hidden="true">✓</span>
+    <span id="url-detect-text"></span>
+  </div>
+  <div id="url-error" class="error-message" role="alert" aria-live="polite" hidden></div>
+</form>
+```
+
+**動作:**
+
+| イベント | 処理 |
+|---------|------|
+| `input` / `paste` | URL を読み、クライアント側 `detectProvider(url)` を実行（provider-spec.md §2 の検出ロジックを移植） |
+| 検出成功 | `#url-detect` に `「✓ SpeakerDeck のスライドを認識しました」` を表示。color = `var(--color-success)` |
+| 検出失敗・空入力 | `#url-detect` を `hidden` |
+| 検出時のラベル | `speakerdeck` → `SpeakerDeck`、`docswell` → `Docswell`、`google_slides` → `Google Slides` |
+
+> **設計判断（コード重複）:** プロバイダ検出ロジックがクライアント・サーバー両方に存在することになるが、即時フィードバックの体験価値が重複コスト（〜30 行）を上回る。共通ロジックは `src/lib/detect-provider.ts` に切り出し、API ハンドラとフロントの両方が import する設計を推奨。
 
 #### 5.3.2 StockList コンポーネント
 
@@ -361,21 +390,21 @@ src/
 </article>
 ```
 
-**ステータス別表示:**
+**表示内容:**
 
-| status | 表示 |
-|--------|------|
-| `pending` | タイトル欄に「メタデータ取得中...」を薄字で表示。embed・メモ以外の操作は可能。 |
-| `ready` | 通常表示（タイトル、著者名、メモ抜粋、リンク） |
-| `failed` | タイトル欄に「メタデータの取得に失敗しました」を赤字で表示。元 URL リンクは表示。削除操作可能。 |
+ストックは登録時点で oEmbed 取得が完了しているため、すべてのカードは `title` / `author_name` / `embed_url` が揃った状態で表示される。`pending` / `failed` 状態は同期モデル化により存在しない（oembed-spec.md 改訂後）。
+
+> **設計判断（status カラムの扱い）:** stocks テーブルの `status` カラムは MVP では常に `ready` として作成される。将来非同期化する余地を残してスキーマには残すが、UI ロジックでは status 分岐を持たない。
 
 **プロバイダラベル:**
 
-| provider | ラベル | バッジ色 |
-|----------|--------|---------|
-| `speakerdeck` | SpeakerDeck | 緑系 (`#4CAF50`) |
-| `docswell` | Docswell | 青系 (`#2196F3`) |
-| `google_slides` | Google Slides | 黄系 (`#FFC107`) |
+| provider | ラベル | バッジ色（CSS 変数） | 実際の値 |
+|----------|--------|----------------------|---------|
+| `speakerdeck` | SpeakerDeck | `--color-provider-speakerdeck` | `#009287`（公式ティール）/ 白文字 |
+| `docswell` | Docswell | `--color-provider-docswell` | `#3091FE`（公式ブルー）/ 白文字 |
+| `google_slides` | Google Slides | `--color-provider-google_slides` | `#FFBA00`（公式イエロー）/ 黒文字（コントラスト確保） |
+
+> **設計判断:** バッジ色は各社の実際のブランドカラーに合わせる。Material Design パレット（旧仕様の `#4CAF50` 等）は SpeakerDeck の実際の色と一致せず、ユーザーのパターン認識（緑のロゴ → SpeakerDeck）を弱めていた。バッジが「そのスライドの提供元」を即視覚化することで一覧画面のスキャン性が向上する。
 
 **メモ抜粋:**
 - `memo_text` の先頭 100 文字を表示
@@ -485,9 +514,26 @@ src/
 - `allow-same-origin`: 同一オリジンの Cookie / ストレージアクセスを許可
 - `allow-popups`: embed 内のリンクが新しいウィンドウを開けるようにする
 
-**pending / failed 時:**
-- `pending`: 「メタデータ取得中...」プレースホルダーを表示（`embed_url` が `null`）
-- `failed`: 「スライドの読み込みができません」プレースホルダーを表示
+**iframe ロード中の表示:**
+
+iframe 自体のロード（src 取得 → 描画）は 1〜3 秒かかる。ユーザーには空白の白枠ではなくグレースケルトンを見せる。
+
+```css
+.embed-viewer {
+  background: var(--color-surface);  /* グレー背景でロード中だと判別可能に */
+}
+.embed-viewer .loading-spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+```
+
+iframe の `load` イベントで `.loading-spinner` を非表示にする。
+
+> **同期モデル化に伴う変更:** 旧仕様では `pending` / `failed` プレースホルダーを定義していたが、同期モデル化により stocks の取得は登録時点で完了するため、これらの状態は UI に存在しない。`embed_url === null` のケースは Google Slides で稀に起こり得る（公開 HTML から取得できないケース）が、その場合のみ「スライドの読み込みができません」プレースホルダーを表示する。
 
 #### 5.4.2 MemoEditor コンポーネント
 
@@ -531,8 +577,22 @@ src/
 
 **文字数カウント:**
 - `input` イベントで現在の文字数をリアルタイム更新
-- 9,500 文字超で警告色（黄色）に変化
-- 10,000 文字超で `maxlength` により入力制限（エラー色）
+- 9,500 文字超で警告色（黄色 = `var(--color-warning)`、`#memo-char-count.warn` クラス）
+- 10,000 文字超で `maxlength` により入力制限（エラー色 = `var(--color-error)`、`#memo-char-count.error` クラス、`font-weight: 600`）
+
+**未保存検知（unsaved-changes 保護）:**
+
+データ喪失防止のため、以下を実装する。
+
+| 項目 | 動作 |
+|------|------|
+| ダーティ判定 | 現在の textarea 値が「最後に保存された値（`lastSavedValue`）」と異なれば dirty |
+| ダーティ表示 | 保存ボタン横に `<span class="memo-dirty">未保存</span>` を表示。`var(--color-warning)` のテキスト |
+| 保存後リセット | 保存成功（200）時に `lastSavedValue` を更新 → ダーティ表示を非表示 |
+| beforeunload 警告 | dirty 時のみ `window.addEventListener("beforeunload", e => { if (isDirty) e.preventDefault(); })` を有効化。タブ閉じ・ナビゲーション時にブラウザネイティブダイアログ |
+| 同一ページ内ナビ警告 | クライアント JS でリンク click 時に dirty なら `window.confirm("未保存の変更があります。離れますか？")` |
+
+> **設計判断:** MVP では自動保存は導入しない。理由: API 負荷・実装コスト・現状の保存ステートマシンの単純さを優先。ユーザーに「保存ボタン未押下のクラッシュ・シャットダウンでデータが消える」リスクは残るが、ダーティ表示と beforeunload で「うっかり忘れ」は防げる。実運用後にサポートチケット傾向を見て自動保存を検討する。
 
 #### 5.4.3 削除機能
 
@@ -607,14 +667,14 @@ interface StockItem {
   original_url: string;
   canonical_url: string;
   provider: "speakerdeck" | "docswell" | "google_slides";
-  title: string | null;
+  title: string | null;          // 同期モデルでは登録成功時に必ず取得済み（Google Slides の HTML スクレイピング失敗時のみ null）
   author_name: string | null;
   thumbnail_url: string | null;
-  embed_url: string | null;
-  status: "pending" | "ready" | "failed";
+  embed_url: string | null;       // Google Slides の例外を除き必ず存在
   memo_text: string | null;
   created_at: string;
   updated_at: string;
+  // 注: status カラムは DB に存在するが、同期モデル化により常に "ready"。型定義からは除外し UI で参照しない
 }
 
 interface StockListResponse {
@@ -655,34 +715,30 @@ interface MemoResponse {
 | ストック 0 件 | 見出し「まだスライドがありません」+ 対応プロバイダリンク（SpeakerDeck / Docswell / Google Slides）+ フォームへのアクション誘導 |
 | メモ未設定 | textarea が空のまま、placeholder が表示される |
 
-### 7.3 Pending ストックのポーリング
+### 7.3 同期登録時のサーバー応答待ち
 
-ストック登録後、Queue による oEmbed 取得完了を待つために、フロントエンドでポーリングを行う。
+> **設計判断（同期モデル化）:** 旧仕様の「pending ストックのポーリング」は同期モデル化により不要となったため削除。POST /api/stocks のレスポンスを待つ間のクライアント挙動は §5.3.1 の送信処理 4-10 を参照。
 
-| 項目 | 値 |
-|------|-----|
-| ポーリング間隔 | 3 秒 |
-| 最大ポーリング回数 | 40 回（約 2 分） |
-| 対象 | `status: "pending"` のストックのみ |
-| API | `GET /api/stocks/:id` で個別にステータスを確認 |
-| 停止条件 | 全 pending ストックが `ready` / `failed` に変化、または最大回数到達 |
-| カード更新 | ステータス変化時に既存カードを新しいカードで DOM 置換 |
+POST /api/stocks のレスポンス待ち中の体験は以下を保証する：
 
-**動作フロー:**
+| 経過時間 | 表示 |
+|---------|------|
+| 0〜3 秒 | 送信ボタンが「追加中...」+ disabled |
+| 3 秒〜 | フォーム下に進捗テキスト「スライド情報を取得しています...」を `aria-live="polite"` で追加表示 |
+| 8 秒〜 | 進捗テキストを「もう少々お待ちください...」に切替 |
+| 15 秒（クライアント側タイムアウト） | エラー表示「タイムアウトしました。もう一度お試しください。」入力値はフォームに保持 |
 
-1. 一覧読み込み時・URL 送信時に `status: "pending"` のストック ID を収集
-2. pending が 1 件以上あればポーリング開始（3 秒間隔）
-3. 各 pending ストックを `GET /api/stocks/:id` で取得
-4. `ready` / `failed` に変化したカードを即座に差し替え、追跡リストから除外
-5. 全て解決 or 最大回数到達でポーリング停止
+サーバー側タイムアウトは oembed-spec.md §9 の合計 12 秒（プロバイダ呼び出し 10 秒 + バッファ）を想定。クライアント側 15 秒はサーバー応答に余裕を持たせるための上限。
 
 ### 7.4 エラー状態
 
 | コンテキスト | 表示内容 | 表示位置 |
 |-------------|---------|---------|
-| URL バリデーションエラー | API の `error` フィールドの値をそのまま表示 | フォーム下の `#url-error` |
+| URL バリデーションエラー（400） | API の `error` フィールドの値をそのまま表示 | フォーム下の `#url-error` |
 | 重複登録（409） | 「このスライドは既にストック済みです」 | フォーム下の `#url-error` |
-| ネットワークエラー | 「サーバーに接続できません。ネットワーク接続を確認してください。」 | フォーム下の `#url-error` またはページ上部バナー |
+| プロバイダ取得失敗（502 / 504） | 「プロバイダから応答がありません。時間をおいて再度お試しください。」入力値はフォームに保持 | フォーム下の `#url-error` |
+| クライアント側タイムアウト（15 秒） | 「タイムアウトしました。もう一度お試しください。」入力値はフォームに保持 | フォーム下の `#url-error` |
+| ネットワークエラー | 「サーバーに接続できません。ネットワーク接続を確認してください。」入力値はフォームに保持 | フォーム下の `#url-error` |
 | 認証エラー（401） | ログインページにリダイレクト（メッセージ表示なし） | — |
 | 詳細画面 404 | 「ストックが見つかりません」+ 一覧に戻るリンク | ページ本文 |
 | メモ保存エラー | API の `error` フィールドの値を `#memo-status` に赤字表示 | メモエディタ下部 |
@@ -707,26 +763,42 @@ public/
 
 ```css
 :root {
-  /* カラー */
-  --color-primary: #1a73e8;        /* プライマリブルー */
-  --color-primary-hover: #1557b0;
-  --color-text: #202124;           /* 本文テキスト */
-  --color-text-secondary: #5f6368; /* 補助テキスト */
+  /* カラー（ブランド: Teal + Orange アクセント — Google ブランド色から脱却） */
+  --color-primary: #0D9488;        /* ティール（プライマリ）*/
+  --color-primary-hover: #0F766E;  /* hover 時の暗いティール */
+  --color-primary-subtle: #CCFBF1; /* 淡いティール（背景・選択時など）*/
+  --color-accent: #F97316;         /* オレンジ（CTA 強調・成功通知）*/
+  --color-accent-hover: #EA580C;
+  --color-text: #0F172A;           /* slate-900: 本文テキスト */
+  --color-text-secondary: #475569; /* slate-600: 補助テキスト */
   --color-background: #ffffff;     /* 背景 */
-  --color-surface: #f8f9fa;        /* カード背景 */
-  --color-border: #dadce0;         /* ボーダー */
-  --color-error: #d93025;          /* エラー赤 */
-  --color-success: #188038;        /* 成功緑 */
-  --color-warning: #f9ab00;        /* 警告黄 */
+  --color-surface: #F8FAFC;        /* slate-50: カード/プレースホルダ背景 */
+  --color-border: #E2E8F0;         /* slate-200: ボーダー */
+  --color-error: #DC2626;          /* red-600: エラー（teal とのコントラスト確保）*/
+  --color-success: #16A34A;        /* green-600: 成功（trust signal）*/
+  --color-warning: #F59E0B;        /* amber-500: 警告 */
+
+  /* プロバイダバッジ（各社実際のブランド色） */
+  --color-provider-speakerdeck: #009287;       /* SpeakerDeck 公式ティール */
+  --color-provider-speakerdeck-text: #ffffff;
+  --color-provider-docswell: #3091FE;          /* Docswell 公式ブルー */
+  --color-provider-docswell-text: #ffffff;
+  --color-provider-google_slides: #FFBA00;     /* Google Slides 公式イエロー */
+  --color-provider-google_slides-text: #1F2937; /* 黄色背景は黒文字でコントラスト確保 */
 
   /* タイポグラフィ */
-  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-family-display: "Geist", "IBM Plex Sans JP", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-family-body: "Geist", "IBM Plex Sans JP", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-family-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-family: var(--font-family-body);  /* 後方互換エイリアス。新規記述では display/body/mono を使う */
   --font-size-base: 16px;
   --font-size-sm: 14px;
   --font-size-lg: 18px;
   --font-size-xl: 24px;
   --font-size-2xl: 32px;
   --line-height-base: 1.6;
+  --letter-spacing-tight: -0.02em;  /* 見出し用、Geist の最適表示 */
+  --letter-spacing-normal: 0;
 
   /* スペーシング */
   --space-xs: 4px;
@@ -735,6 +807,8 @@ public/
   --space-lg: 24px;
   --space-xl: 32px;
   --space-2xl: 48px;
+  --space-3xl: 64px;   /* セクション間ギャップ用（landing 等）*/
+  --space-4xl: 96px;   /* hero 縦パディング、大セクション間用 */
 
   /* レイアウト */
   --max-width: 960px;
@@ -746,6 +820,67 @@ public/
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 ```
+
+### 8.2.1 フォント self-host 設定
+
+Geist (Vercel 製、SIL OFL ライセンス、Variable) と IBM Plex Sans JP (IBM 製、SIL OFL ライセンス) を `public/fonts/` に self-host する。
+
+```html
+<!-- BaseLayout.astro の <head> 内 -->
+<link rel="preload" href="/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/IBMPlexSansJP-Variable.woff2" as="font" type="font/woff2" crossorigin>
+```
+
+```css
+/* global.css 先頭 */
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/Geist-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/GeistMono-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "IBM Plex Sans JP";
+  src: url("/fonts/IBMPlexSansJP-Variable.woff2") format("woff2-variations");
+  font-weight: 100 700;
+  font-display: swap;
+  font-style: normal;
+  unicode-range: U+3000-30FF, U+4E00-9FFF, U+FF00-FFEF;  /* 日本語+ASCII記号のみ */
+}
+```
+
+> **設計判断:** Geist は欧文・数字・記号を担当、IBM Plex Sans JP は日本語を担当する分業構成。`unicode-range` で日本語フォントは日本語グリフのみロード（〜800KB → ~150KB に削減）。`font-display: swap` で初描画は system-ui で表示、フォント到着後にスワップ（FOUT 容認、blocking しない）。
+
+**ファイルサイズ目安（subset 後）:**
+
+| ファイル | サイズ |
+|---------|--------|
+| Geist-Variable.woff2 | ~80 KB |
+| GeistMono-Variable.woff2 | ~70 KB |
+| IBMPlexSansJP-Variable.woff2（日本語+記号サブセット） | ~150 KB |
+| 合計 | ~300 KB |
+
+Cloudflare Pages の CDN 配信 + 1年の immutable cache で実質的なリピート訪問コストはゼロ。
+
+### 8.2.2 タイポグラフィ用途別マッピング
+
+| 用途 | font-family | weight | size | letter-spacing |
+|------|------------|--------|------|----------------|
+| h1（ページタイトル） | display | 700 | 32px | tight |
+| h2（セクションタイトル） | display | 600 | 24px | tight |
+| h3（カードタイトル等） | display | 600 | 18px | normal |
+| 本文 | body | 400 | 16px | normal |
+| 補助テキスト | body | 400 | 14px | normal |
+| ボタン | body | 500 | 14px | normal |
+| コード／URL 表示 | mono | 400 | 14px | normal |
 
 ### 8.3 グローバルリセット
 
@@ -777,6 +912,16 @@ body {
 | `.btn-text` | テキストリンク風ボタン | 背景なし、文字: `--color-primary`、下線なし、ホバーで下線 |
 | `.btn-google-login` | Google ログイン | 白背景 + 細枠線、ホバーで軽い影 |
 | `.btn-logout` | ログアウト | テキストリンク風、文字: `--color-text-secondary` |
+
+**ボタンサイズ:**
+
+| クラス | 用途 | 高さ | パディング | font-size |
+|--------|------|------|-----------|-----------|
+| （default） | 通常 | 40px | `0 20px` | 14px |
+| `.btn-sm` | コンパクト | 32px | `0 12px` | 13px |
+| `.btn-lg` | LP / 重要CTA | 48px | `0 28px` | 16px |
+
+全ボタン共通: `border-radius: 8px`, `font-weight: 500`, `font-family: var(--font-family-body)`
 
 ### 8.5 カードスタイル
 

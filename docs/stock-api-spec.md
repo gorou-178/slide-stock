@@ -1,5 +1,18 @@
 # Stock API 仕様
 
+> ⚠️ **同期モデル化に伴う改訂が必要（MVP）**
+>
+> POST /api/stocks は **oEmbed 取得まで同期実行**してから 201 を返す。
+>
+> - 取得成功時: status=`ready`、title / author_name / embed_url が揃った状態で 201 を返却
+> - 取得失敗時（指数バックオフ 3 回リトライ後）: 502 UPSTREAM_FAILURE または 504 UPSTREAM_TIMEOUT。**stock レコードは作成しない（DB ロールバック）**
+> - サーバー側タイムアウト合計 12 秒以内
+> - `status` カラムは DB スキーマに残すが MVP では常に `ready`
+>
+> 本仕様の §3.6（処理フローの "5. stock レコードを INSERT（status=pending）" 以降）, §3.7（レスポンス例の status=pending）, §8.1 P1〜P3 のテストケース（status=pending 期待）は同期モデルへの書き換えが必要。
+>
+> **TODO:** 本仕様を同期モデルに合わせて書き換え（タスク追加予定）。
+
 ## 1. 概要
 
 Stock API はスライドのストック（登録・一覧・詳細・削除）を管理する CRUD API である。
