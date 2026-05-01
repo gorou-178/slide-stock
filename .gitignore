@@ -60,3 +60,4 @@ ops/
 *.tmp
 *.temp
 .gstack/
+.context/
