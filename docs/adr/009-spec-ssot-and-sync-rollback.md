@@ -93,6 +93,32 @@ INSERT 中に D1 から非 UNIQUE エラー（接続切断・容量上限・SQL 
 - **挙動**: 500 `INTERNAL_ERROR` を返し、`console.error` でログを残す。stock は INSERT が中断するため何も残らない。
 - ユーザーは同じ URL で再 POST すれば再度 oEmbed 取得 → INSERT 試行になる。
 
+### 4-5. Google Slides も他プロバイダと同等の hard failure に統一（軟性失敗の廃止）
+
+旧 spec / ADR-004 系の記述では Google Slides の HTML タイトル取得失敗を「軟性失敗（soft failure）」として扱い、「`embed_url` は canonical URL から機械的に構築できるため、`title=null` でも 201 で stock を作成する」としていた。
+
+**本 ADR では撤回する。** title は **検索性・一覧性・カードの可読性すべてにおいて中核となる情報**であり、これが欠けた stock は「中途半端なデータ」である。元 URL のリンクだけが残っても、ユーザーが何のスライドかを思い出せないと再発見できない。
+
+#### 新方針
+
+Google Slides も SpeakerDeck / Docswell と同じく、メタデータ取得の rollback semantics に従う:
+
+| 旧 spec（軟性失敗あり） | 新 spec（本 ADR）|
+|------------------------|-----------------|
+| HTML 取得失敗 → catch + warn ログ + `title=null` で 201 | HTML 取得失敗 → 一般 `Error` を throw → §4-2 のリトライ対象 |
+| HTML title なし（JS レンダ前提でタグが空） | 同上（HTML 取得自体が成功でも title 抽出不能なら `PermanentError` を throw → 502 `UPSTREAM_INVALID_RESPONSE`） |
+| 401 / 403（非公開） | `PermanentError` → 400 `UPSTREAM_FORBIDDEN`（他プロバイダの 403 と同じ扱い） |
+| 5xx / タイムアウト / ネットワーク失敗 | 一般 `Error` → 指数バックオフ 3 回 → リトライ上限到達で 502 `UPSTREAM_FAILURE` / 504 `UPSTREAM_TIMEOUT` |
+
+#### embed_url の扱い
+
+`embed_url` は依然として canonical URL から機械的に構築可能だが、これだけ取れても title がなければ stock として価値を持たないため、INSERT は行わない。embed URL 構築は title 取得成功後に同じ INSERT 文で書き込む（仕様上は変わらず、実行順序のみ「title 取得 → 成功時に embed URL 構築 → INSERT」）。
+
+#### 受け入れるトレードオフ
+
+- 公開だが JavaScript レンダリング後にしか `<title>` が出ないプレゼンテーションは MVP では取り込めない（502 `UPSTREAM_INVALID_RESPONSE` が返る）。代替: ブラウザレンダリング機能の導入は MVP のコスト方針（architecture.md）に反するため見送る。ユーザーは Google スライド側で公開設定 + タイトル明記を確認する運用とする
+- 一時的に Google ドメインに到達できない期間は Google Slides の登録ができなくなる。既存の `UPSTREAM_FAILURE` で表示する
+
 ### 不採用の選択肢
 
 | 選択肢 | 不採用理由 |
@@ -130,7 +156,10 @@ INSERT 中に D1 から非 UNIQUE エラー（接続切断・容量上限・SQL 
 
 各 PR で `npm test` を緑にしてからマージ。テストは spec の §8.1（stock-api-spec.md）を網羅する。
 
-> **改訂履歴:** 本 ADR の前バージョン案（コミット `0329d8a`）では「migration 0004 で `status` カラムを復活させる PR-B」を含んでいた。レビューを経て YAGNI を理由に廃止（§4-3）。同時に並列レース / D1 INSERT 失敗の扱いも未定義だったため §4-4 で追記。後続 PR の番号も繰り上げ（旧 PR-C → PR-B など）。
+> **改訂履歴:**
+> - 初版（コミット `0329d8a`）: ADR 整備のみ。「migration 0004 で `status` カラムを復活させる PR-B」を含む実装計画。
+> - 第 2 版（コミット `8455810`）: レビューを経て YAGNI を理由に migration 0004 を廃止（§4-3）。並列レース / D1 INSERT 失敗の扱いも未定義だったため §4-4 で追記。後続 PR の番号を繰り上げ（旧 PR-C → PR-B など）。
+> - 第 3 版（本コミット）: Google Slides の HTML タイトル取得を「軟性失敗」扱いから他プロバイダと同等の hard failure に統一（§4-5）。title は中核情報のため取得失敗時は stock を作らずエラーレスポンスを返す。
 
 ## 参照
 

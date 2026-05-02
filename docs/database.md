@@ -110,7 +110,7 @@ stateDiagram-v2
     Exists --> [*] : DELETE /api/stocks/:id
 ```
 
-stock は INSERT 後、ユーザーが DELETE するまで残る。同期モデル + rollback semantics（ADR-009 §4-2）により、INSERT が成功した stock は `embed_url` 充足が原則保証される（Google Slides で HTML タイトルが取れない軟性失敗のみ `title=null` の例外）。
+stock は INSERT 後、ユーザーが DELETE するまで残る。同期モデル + rollback semantics（ADR-009 §4-2）と Google Slides 軟性失敗の撤回（ADR-009 §4-5）により、INSERT が成功した stock は `title` / `embed_url` ともに充足が保証される（`author_name` のみ Google Slides では仕様上 `null`、`thumbnail_url` は MVP 全体で常に `null`）。
 
 将来 Cloudflare Queues 等で非同期化したくなった場合は、その時点で migration を 1 本足して `status` カラムを再導入する（YAGNI、ADR-009 §4-3）。
 
