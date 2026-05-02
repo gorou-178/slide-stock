@@ -1,18 +1,5 @@
 # Stock API 仕様
 
-> ⚠️ **同期モデル化に伴う改訂が必要（MVP）**
->
-> POST /api/stocks は **oEmbed 取得まで同期実行**してから 201 を返す。
->
-> - 取得成功時: status=`ready`、title / author_name / embed_url が揃った状態で 201 を返却
-> - 取得失敗時（指数バックオフ 3 回リトライ後）: 502 UPSTREAM_FAILURE または 504 UPSTREAM_TIMEOUT。**stock レコードは作成しない（DB ロールバック）**
-> - サーバー側タイムアウト合計 12 秒以内
-> - `status` カラムは DB スキーマに残すが MVP では常に `ready`
->
-> 本仕様の §3.6（処理フローの "5. stock レコードを INSERT（status=pending）" 以降）, §3.7（レスポンス例の status=pending）, §8.1 P1〜P3 のテストケース（status=pending 期待）は同期モデルへの書き換えが必要。
->
-> **TODO:** 本仕様を同期モデルに合わせて書き換え（タスク追加予定）。
-
 ## 1. 概要
 
 Stock API はスライドのストック（登録・一覧・詳細・削除）を管理する CRUD API である。
@@ -72,10 +59,15 @@ interface ErrorResponse {
 | 400 | `UNSUPPORTED_PROVIDER` | 対応していないプロバイダの URL |
 | 400 | `INVALID_FORMAT` | プロバイダは対応しているがパス形式が不正 |
 | 400 | `UNSUPPORTED_URL_TYPE` | embed URL やプロフィール URL などストック対象外 |
+| 400 | `UPSTREAM_NOT_FOUND` | プロバイダ側にスライドが存在しない／非公開（404 を恒久エラーとして変換） |
+| 400 | `UPSTREAM_FORBIDDEN` | プロバイダ側からアクセス拒否（403 を恒久エラーとして変換） |
 | 401 | `UNAUTHORIZED` | 認証が必要 |
 | 404 | `NOT_FOUND` | 指定されたリソースが存在しない |
 | 409 | `DUPLICATE_STOCK` | 同一 URL が既にストック済み |
 | 500 | `INTERNAL_ERROR` | サーバー内部エラー |
+| 502 | `UPSTREAM_FAILURE` | プロバイダ取得が指数バックオフリトライ後も失敗（5xx 等の一時的エラー） |
+| 502 | `UPSTREAM_INVALID_RESPONSE` | プロバイダのレスポンス形式が想定外（仕様変更を疑う恒久エラー） |
+| 504 | `UPSTREAM_TIMEOUT` | プロバイダ取得が合計 12 秒タイムアウト予算を超過 |
 
 ### 2.4 日時形式
 
@@ -123,10 +115,15 @@ Cookie: session=...
    → 失敗時: ProviderError に応じた 400 エラー返却
 4. 重複チェック: 同一ユーザー × canonical_url で既存 stock を検索
    → 重複あり: 409 Conflict 返却
-5. stock レコードを INSERT（status=pending）
-6. Queue にメッセージを送信（oEmbed メタデータ取得用）
-7. 201 Created + stock オブジェクト返却
+5. プロバイダ別 oEmbed / メタデータ取得を同期実行
+   （指数バックオフ 3 回、各 3 秒、合計 12 秒予算 — oembed-spec.md §6）
+   → 恒久エラー（404/403/形式不正）: 即座に 400 / 502 を返却（ストック作成なし）
+   → 全リトライ失敗: 502 UPSTREAM_FAILURE / 504 UPSTREAM_TIMEOUT 返却（ストック作成なし）
+6. 取得したメタデータを揃えた状態で stock を INSERT（status='ready'）
+7. 201 Created + 完成済み stock オブジェクト返却
 ```
+
+> **設計判断（同期モデル）:** 旧仕様では status=pending で先に INSERT してから Cloudflare Queue Consumer が UPDATE していた。同期モデル化（ui-spec.md §5.3.1 / §7.3、oembed-spec.md §5）により、取得失敗時に半端な stock を残さない設計に変更。pending / failed カードは UI から消え、ポーリング・再取得 UI も不要になる。
 
 ### 3.3 バリデーション
 
@@ -168,11 +165,36 @@ Content-Type: application/json
 > - POST の冪等性を保証する必要がない（同じ URL の再送信はユーザー操作ミスとみなす）
 > - 「同じ URL を同じユーザーが異なる意図でストック」するユースケースは想定しない
 
-### 3.5 stock 挿入
+### 3.5 同期 oEmbed 取得
+
+重複チェックを通過したら、stock を INSERT する**前に**プロバイダ別の oEmbed / メタデータ取得を同期実行する（oembed-spec.md §5 / §6）。
+
+```typescript
+const metadata = await fetchWithRetry(
+  (signal) => fetchProviderMetadata(provider, canonicalUrl, signal),
+  /* totalBudgetMs = */ 12_000,
+);
+```
+
+| 取得結果 | 後続処理 |
+|---------|---------|
+| 成功 | §3.6 の INSERT へ進む |
+| 恒久エラー（404 / 403 / 形式不正） | INSERT せず、§3.8 のエラーレスポンスを即返す |
+| 全リトライ失敗（5xx / タイムアウト） | INSERT せず、502 / 504 を返す |
+
+エラー分類とリトライ判定は oembed-spec.md §6.3、各プロバイダ別の取得処理は §2 / §3 / §4 を参照。
+
+### 3.6 stock 挿入
+
+oEmbed 取得が成功したメタデータを揃えた状態で 1 回 INSERT する。`status` は MVP では常に `'ready'`（database.md `status` カラム）。
 
 ```sql
-INSERT INTO stocks (id, user_id, original_url, canonical_url, provider, status, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, 'pending', ?, ?);
+INSERT INTO stocks (
+  id, user_id, original_url, canonical_url, provider,
+  title, author_name, thumbnail_url, embed_url, status,
+  created_at, updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?);
 ```
 
 - `id`: UUID v4 を生成
@@ -180,23 +202,9 @@ VALUES (?, ?, ?, ?, ?, 'pending', ?, ?);
 - `original_url`: リクエストの `url`（ユーザー入力そのまま）
 - `canonical_url`: `detectProvider` が返した正規化 URL
 - `provider`: `detectProvider` が返したプロバイダ識別子
-- `status`: `'pending'`（oEmbed 取得前）
+- `title` / `author_name` / `thumbnail_url` / `embed_url`: §3.5 で取得したメタデータ（取れなかったフィールドは `null`、ただし `embed_url` は SpeakerDeck / Docswell では必ず取れる、Google Slides では機械的構築で必ず取れる）
+- `status`: `'ready'`（MVP 固定）
 - `created_at`, `updated_at`: 現在時刻（ISO 8601）
-
-### 3.6 Queue メッセージ送信
-
-stock 挿入後、oEmbed メタデータ取得用のメッセージを Queue に送信する。
-メッセージスキーマは docs/oembed-spec.md セクション 5 に準拠:
-
-```typescript
-await env.OEMBED_QUEUE.send({
-  schemaVersion: 1,
-  stockId: stock.id,
-  originalUrl: body.url,
-  canonicalUrl: canonicalUrl,
-  provider: provider,
-});
-```
 
 ### 3.7 レスポンス（201 Created）
 
@@ -206,19 +214,18 @@ await env.OEMBED_QUEUE.send({
   "original_url": "https://speakerdeck.com/jnunemaker/atom",
   "canonical_url": "https://speakerdeck.com/jnunemaker/atom",
   "provider": "speakerdeck",
-  "title": null,
-  "author_name": null,
+  "title": "Atom",
+  "author_name": "John Nunemaker",
   "thumbnail_url": null,
-  "embed_url": null,
-  "status": "pending",
+  "embed_url": "https://speakerdeck.com/player/31f86a9069ae0132dede22511952b5a3",
+  "status": "ready",
   "memo_text": null,
   "created_at": "2025-06-15T10:30:00.000Z",
   "updated_at": "2025-06-15T10:30:00.000Z"
 }
 ```
 
-> **注意:** 登録直後は `status=pending` で、メタデータ（title, author_name, embed_url 等）は全て `null`。
-> Queue Consumer による処理完了後に `status=ready` に更新される。
+> **注意:** 同期モデルでは登録時点で oEmbed 取得が完了しているため、レスポンスの `status` は常に `"ready"`、`title` / `author_name` / `embed_url` は揃った状態で返る（Google Slides の `author_name` は仕様上 `null`、`thumbnail_url` は MVP では常に `null`）。
 
 ### 3.8 エラーレスポンス例
 
@@ -235,6 +242,30 @@ await env.OEMBED_QUEUE.send({
 {
   "error": "対応していないサービスの URL です。SpeakerDeck / Docswell / Google Slides の URL を入力してください",
   "code": "UNSUPPORTED_PROVIDER"
+}
+```
+
+**プロバイダ側にスライドがない／非公開（400）:**
+```json
+{
+  "error": "スライドが見つかりません。URL が正しいか、スライドが公開されているか確認してください",
+  "code": "UPSTREAM_NOT_FOUND"
+}
+```
+
+**プロバイダ取得が指数バックオフ後も失敗（502）:**
+```json
+{
+  "error": "プロバイダから応答がありません。時間をおいて再度お試しください",
+  "code": "UPSTREAM_FAILURE"
+}
+```
+
+**プロバイダ取得が合計タイムアウトを超過（504）:**
+```json
+{
+  "error": "プロバイダ応答がタイムアウトしました。時間をおいて再度お試しください",
+  "code": "UPSTREAM_TIMEOUT"
 }
 ```
 
@@ -562,21 +593,23 @@ interface StockResponse {
   original_url: string;          // ユーザー入力 URL
   canonical_url: string;         // 正規化 URL
   provider: Provider;            // プロバイダ識別子
-  title: string | null;          // スライドタイトル（pending 時は null）
-  author_name: string | null;    // 著者名（pending 時は null）
-  thumbnail_url: string | null;  // サムネイル URL（MVP では基本 null）
-  embed_url: string | null;      // 埋め込み URL（pending 時は null）
-  status: StockStatus;           // ステータス
+  title: string | null;          // スライドタイトル（Google Slides で HTML 取得失敗時のみ null）
+  author_name: string | null;    // 著者名（Google Slides は仕様上常に null）
+  thumbnail_url: string | null;  // サムネイル URL（MVP では常に null）
+  embed_url: string | null;      // 埋め込み URL（同期モデルでは原則 null にならない）
+  status: StockStatus;           // ステータス（MVP では常に "ready"）
   memo_text: string | null;      // メモ本文（未作成時は null）
   created_at: string;            // 作成日時（ISO 8601）
   updated_at: string;            // 更新日時（ISO 8601）
 }
 
 type Provider = "speakerdeck" | "docswell" | "google_slides";
-type StockStatus = "pending" | "ready" | "failed";
+type StockStatus = "pending" | "ready" | "failed";  // 型は将来非同期化用に残すが、MVP では常に "ready"
 ```
 
 > **注意:** `user_id` はレスポンスに含めない。認証済みユーザー自身のデータのみが返るため、冗長かつセキュリティ上不要。
+
+> **設計判断（status カラム）:** MVP では同期モデル（oembed-spec.md §5）により取得失敗時に stock を作成しないため、`status` は常に `"ready"` を返す。`StockStatus` 型に `"pending"` / `"failed"` を残しているのは将来非同期化（Cloudflare Queues 等への切替）に備えるためで、クライアント側で `status === "ready"` 以外を分岐する必要はない（ui-spec.md §5.3.3）。
 
 ---
 
@@ -588,26 +621,35 @@ QA（T-536）で作成するテストケースの網羅表。
 
 #### 正常系
 
-| # | シナリオ | リクエスト | 期待: ステータス | 期待: レスポンス |
-|---|---------|-----------|-----------------|-----------------|
-| P1 | SpeakerDeck URL 登録 | `{ "url": "https://speakerdeck.com/user/slide" }` | 201 | stock オブジェクト（status=pending） |
-| P2 | Docswell URL 登録 | `{ "url": "https://www.docswell.com/s/user/ABC123-title" }` | 201 | stock オブジェクト（status=pending） |
-| P3 | Google Slides URL 登録 | `{ "url": "https://docs.google.com/presentation/d/1abc.../edit" }` | 201 | stock オブジェクト（status=pending） |
-| P4 | URL 正規化の確認 | `{ "url": "http://www.speakerdeck.com/user/slide/" }` | 201 | canonical_url が正規化されていること |
+oEmbed のレスポンスはモック（fetch スタブ）で固定値を返す前提。すべて status=`"ready"` で title / author_name / embed_url が埋まっていることを確認する。
+
+| # | シナリオ | リクエスト | プロバイダ応答（モック） | 期待: ステータス | 期待: レスポンス |
+|---|---------|-----------|-------------------------|-----------------|-----------------|
+| P1 | SpeakerDeck URL 登録 | `{ "url": "https://speakerdeck.com/user/slide" }` | 200 + 正常な oEmbed JSON | 201 | status=`"ready"`、title / author_name / embed_url が埋まっている |
+| P2 | Docswell URL 登録 | `{ "url": "https://www.docswell.com/s/user/ABC123-title" }` | 200 + 正常な oEmbed JSON | 201 | status=`"ready"`、title / author_name / embed_url が埋まっている |
+| P3 | Google Slides URL 登録 | `{ "url": "https://docs.google.com/presentation/d/1abc.../edit" }` | HTML 取得 200 + `<title>` 含む | 201 | status=`"ready"`、embed_url=`{canonical}/embed`、title が埋まっている、author_name=null |
+| P4 | URL 正規化の確認 | `{ "url": "http://www.speakerdeck.com/user/slide/" }` | 200 + 正常な oEmbed JSON | 201 | canonical_url が正規化されていること |
+| P4b | Google Slides の HTML 取得失敗（軟性失敗） | Google Slides URL | HTML 取得 500 | 201 | status=`"ready"`、embed_url=`{canonical}/embed`、title=null（DB ロールバックしない） |
 
 #### 異常系
 
-| # | シナリオ | リクエスト | 期待: ステータス | 期待: code |
-|---|---------|-----------|-----------------|-----------|
-| P5 | URL 未指定 | `{}` | 400 | `INVALID_REQUEST` |
-| P6 | URL が空文字 | `{ "url": "" }` | 400 | `INVALID_URL` |
-| P7 | 不正な URL 形式 | `{ "url": "not-a-url" }` | 400 | `INVALID_URL` |
-| P8 | 未対応プロバイダ | `{ "url": "https://slideshare.net/user/slide" }` | 400 | `UNSUPPORTED_PROVIDER` |
-| P9 | 不正なパス形式 | `{ "url": "https://speakerdeck.com/user" }` | 400 | `INVALID_FORMAT` |
-| P10 | embed URL（対象外） | `{ "url": "https://speakerdeck.com/player/abc123" }` | 400 | `UNSUPPORTED_URL_TYPE` |
-| P11 | 重複 URL 登録 | 既存と同じ canonical_url | 409 | `DUPLICATE_STOCK` |
-| P12 | JSON パースエラー | 不正な JSON | 400 | `INVALID_REQUEST` |
-| P13 | 未認証 | Cookie なし | 401 | `UNAUTHORIZED` |
+| # | シナリオ | リクエスト | プロバイダ応答（モック） | 期待: ステータス | 期待: code |
+|---|---------|-----------|-------------------------|-----------------|-----------|
+| P5 | URL 未指定 | `{}` | — | 400 | `INVALID_REQUEST` |
+| P6 | URL が空文字 | `{ "url": "" }` | — | 400 | `INVALID_URL` |
+| P7 | 不正な URL 形式 | `{ "url": "not-a-url" }` | — | 400 | `INVALID_URL` |
+| P8 | 未対応プロバイダ | `{ "url": "https://slideshare.net/user/slide" }` | — | 400 | `UNSUPPORTED_PROVIDER` |
+| P9 | 不正なパス形式 | `{ "url": "https://speakerdeck.com/user" }` | — | 400 | `INVALID_FORMAT` |
+| P10 | embed URL（対象外） | `{ "url": "https://speakerdeck.com/player/abc123" }` | — | 400 | `UNSUPPORTED_URL_TYPE` |
+| P11 | 重複 URL 登録 | 既存と同じ canonical_url | — | 409 | `DUPLICATE_STOCK` |
+| P12 | JSON パースエラー | 不正な JSON | — | 400 | `INVALID_REQUEST` |
+| P13 | 未認証 | Cookie なし | — | 401 | `UNAUTHORIZED` |
+| P14 | プロバイダ 404（恒久エラー） | 正常な SpeakerDeck URL | 404 を 1 回返す（リトライしないこと） | 400 | `UPSTREAM_NOT_FOUND` |
+| P15 | プロバイダ 403（恒久エラー） | 正常な Docswell URL | 403 を 1 回返す（リトライしないこと） | 400 | `UPSTREAM_FORBIDDEN` |
+| P16 | プロバイダ 5xx 連続失敗 | 正常な SpeakerDeck URL | 503 を 3 回返す | 502 | `UPSTREAM_FAILURE` |
+| P17 | プロバイダ タイムアウト | 正常な Docswell URL | 各リクエストが 4 秒以上かかる | 504 | `UPSTREAM_TIMEOUT` |
+| P18 | oEmbed レスポンス形式不正（恒久エラー） | 正常な SpeakerDeck URL | 200 だが `html` が iframe を含まない | 502 | `UPSTREAM_INVALID_RESPONSE` |
+| P19 | プロバイダ失敗時に stock が作成されないこと | 正常な SpeakerDeck URL | 503 を 3 回返す | 502 | レスポンス後に DB を確認、該当 canonical_url の stock が存在しない |
 
 ### 8.2 GET /api/stocks
 
@@ -677,8 +719,8 @@ QA（T-536）で作成するテストケースの網羅表。
 
 | タスク | 本仕様の該当セクション |
 |--------|----------------------|
-| T-531 POST /stocks 実装 | セクション 3（POST /api/stocks） |
-| T-532 GET /stocks 実装 | セクション 4（GET /api/stocks） |
-| T-533 GET /stocks/:id 実装 | セクション 5（GET /api/stocks/:id） |
-| T-534 DELETE /stocks/:id 実装 | セクション 6（DELETE /api/stocks/:id） |
-| T-536 Stock API ユニットテスト | セクション 8（テストケース一覧） |
+| T-531 POST /stocks 実装 | §3（POST /api/stocks）+ oembed-spec.md §5 / §6（同期 oEmbed 取得 + 指数バックオフ）|
+| T-532 GET /stocks 実装 | §4（GET /api/stocks） |
+| T-533 GET /stocks/:id 実装 | §5（GET /api/stocks/:id） |
+| T-534 DELETE /stocks/:id 実装 | §6（DELETE /api/stocks/:id） |
+| T-536 Stock API ユニットテスト | §8（テストケース一覧）特に §8.1 P14〜P19（プロバイダ失敗系）|

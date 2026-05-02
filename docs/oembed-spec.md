@@ -1,36 +1,24 @@
-# oEmbed / Queue 処理仕様
-
-> ⚠️ **同期モデル化に伴う改訂が必要（MVP）**
->
-> ui-spec.md §5.3.1, §7.3 で確定した方針に従い、oEmbed 取得は **POST /api/stocks のリクエスト内で同期実行**する。
->
-> - Cloudflare Queues / Queue Consumer は MVP では使用しない
-> - `pending` / `failed` ステータスは存在しない（取得失敗時は DB ロールバックでストックを作成しない）
-> - 指数バックオフ 3 回リトライ（合計タイムアウト 12 秒以内）を同期処理内で実行
-> - 全失敗時は 502 / 504 を返却、クライアントはユーザーに再入力を促す
->
-> 本仕様の §5（Queue メッセージスキーマ）, §6（Consumer 処理フロー）, §7（リトライポリシー）, §8.2（再取得フロー）は同期モデルへの書き換えが必要。
-> §2（SpeakerDeck oEmbed）, §3（Docswell oEmbed）, §4（Google Slides）, §9（タイムアウト）, §10（セキュリティ）は同期モデルでもそのまま流用可能。
->
-> **TODO:** 本仕様を同期モデルに合わせて書き換え（タスク追加予定）。
+# oEmbed メタデータ取得仕様
 
 ## 1. 概要
 
-ユーザーが URL を登録すると、API は stock を `pending` 状態で作成し、Cloudflare Queue にメッセージを送信する。
-Queue Consumer がメッセージを受信し、oEmbed / メタデータ取得を行い、stock を `ready` または `failed` に更新する。
+ユーザーが URL を登録すると、`POST /api/stocks` のリクエスト内で oEmbed / メタデータ取得を**同期実行**してから 201 を返す。取得が成功した時点で stock は `title` / `author_name` / `embed_url` が揃った状態で永続化される。取得が失敗した場合は DB ロールバックでストックを作成せず、502 / 504 をクライアントに返す。
+
+Cloudflare Queues / Queue Consumer / `pending` / `failed` ステータスは MVP では使用しない（将来非同期化する余地を残してスキーマには `status` カラムを残すが、MVP では常に `ready`）。同期モデルを採用する根拠は `ui-spec.md` §5.3.1 / §7.3 / `stock-api-spec.md` §3 を参照。
 
 本仕様では以下を定義する:
-1. 各プロバイダの oEmbed エンドポイントとレスポンス仕様
-2. Google Slides の embed URL 構築ルール
-3. Queue メッセージスキーマ
-4. リトライポリシー
-5. 失敗時の処理
+1. 各プロバイダの oEmbed エンドポイントとレスポンス仕様（§2 / §3）
+2. Google Slides の embed URL 構築ルール（§4）
+3. 同期取得処理フロー（§5）
+4. 指数バックオフリトライポリシー（§6）
+5. 失敗時の DB ロールバックとユーザー応答（§7）
 
 ### 前提ドキュメント
 
 - [docs/architecture.md](architecture.md) — スライド登録フロー（シーケンス図）
-- [docs/database.md](database.md) — stocks テーブル（status: pending → ready / failed）
+- [docs/database.md](database.md) — stocks テーブル（status は MVP では常に `ready`）
 - [docs/provider-spec.md](provider-spec.md) — プロバイダ検出・URL 正規化
+- [docs/stock-api-spec.md](stock-api-spec.md) — `POST /api/stocks` の処理フロー
 
 ---
 
@@ -94,9 +82,10 @@ function extractEmbedUrl(html: string): string | null {
 
 | HTTP ステータス | 意味 | 処理 |
 |----------------|------|------|
-| 200 | 正常 | フィールド抽出 → stock 更新 |
-| 404 | スライドが存在しない / 非公開 | `status=failed`, `error_detail` 記録 |
-| 5xx | SpeakerDeck 側障害 | リトライ対象 |
+| 200 | 正常 | フィールド抽出 → 後続フローで stock を INSERT（§5） |
+| 404 | スライドが存在しない / 非公開 | 恒久エラー: リトライ不要、即座に 400 `UPSTREAM_NOT_FOUND` を返す（§6 / §7） |
+| 5xx | SpeakerDeck 側障害 | 一時的エラー: 指数バックオフでリトライ（§6） |
+| タイムアウト | ネットワーク／プロバイダ遅延 | 一時的エラー: 指数バックオフでリトライ（§6） |
 
 ---
 
@@ -151,9 +140,10 @@ GET https://www.docswell.com/service/oembed?url={canonical_url}&format=json
 
 | HTTP ステータス | レスポンス | 処理 |
 |----------------|-----------|------|
-| 200 | 正常な oEmbed JSON | フィールド抽出 → stock 更新 |
-| 404 | `{"status": 404, "errors": "Slide not found or private"}` | `status=failed`, `error_detail` 記録 |
-| 5xx | サーバーエラー | リトライ対象 |
+| 200 | 正常な oEmbed JSON | フィールド抽出 → 後続フローで stock を INSERT（§5） |
+| 404 | `{"status": 404, "errors": "Slide not found or private"}` | 恒久エラー: リトライ不要、即座に 400 `UPSTREAM_NOT_FOUND` を返す（§6 / §7） |
+| 5xx | サーバーエラー | 一時的エラー: 指数バックオフでリトライ（§6） |
+| タイムアウト | ネットワーク／プロバイダ遅延 | 一時的エラー: 指数バックオフでリトライ（§6） |
 
 ---
 
@@ -235,143 +225,61 @@ async function fetchGoogleSlidesTitle(canonicalUrl: string): Promise<string | nu
 
 ### 4.5 成功判定
 
-Google Slides は embed URL が機械的に構築できるため、**常に `status=ready` になる**。
-タイトル取得の成否は status に影響しない。
+Google Slides は embed URL が canonical URL から機械的に構築できるため、**外部リクエストの結果に関わらず stock 作成は成功する**（§4.4 のとおり `embed_url` だけは必ず取れる）。タイトル取得の HTTP 失敗・タイムアウトは title=null として扱い、502 / 504 を返さない（同期モデルでも DB ロールバックの対象外）。
 
 ---
 
-## 5. Queue メッセージスキーマ
+## 5. 同期取得処理フロー
 
-### 5.1 メッセージ構造
+### 5.1 全体フロー
 
-```typescript
-interface OEmbedQueueMessage {
-  schemaVersion: 1;
-  stockId: string;        // stocks.id (UUID)
-  originalUrl: string;    // ユーザー入力 URL
-  canonicalUrl: string;   // 正規化済み URL
-  provider: "speakerdeck" | "docswell" | "google_slides";
-}
-```
-
-### 5.2 メッセージ例
-
-```json
-{
-  "schemaVersion": 1,
-  "stockId": "550e8400-e29b-41d4-a716-446655440000",
-  "originalUrl": "https://speakerdeck.com/jnunemaker/atom",
-  "canonicalUrl": "https://speakerdeck.com/jnunemaker/atom",
-  "provider": "speakerdeck"
-}
-```
-
-### 5.3 Producer（API 側）
-
-`POST /stocks` のハンドラ内で stock を INSERT した直後に enqueue する:
-
-```typescript
-await env.OEMBED_QUEUE.send({
-  schemaVersion: 1,
-  stockId: stock.id,
-  originalUrl: body.url,
-  canonicalUrl: canonicalUrl,
-  provider: provider,
-});
-```
-
-### 5.4 wrangler.toml 設定
-
-```toml
-[[queues.producers]]
-queue = "oembed-fetch"
-binding = "OEMBED_QUEUE"
-
-[[queues.consumers]]
-queue = "oembed-fetch"
-max_batch_size = 2
-max_batch_timeout = 3
-max_retries = 3
-dead_letter_queue = "oembed-fetch-dlq"
-```
-
-> **設計判断:** `max_batch_timeout = 3`（秒）に設定し、ユーザーがスライド登録後すぐにメタデータが反映される体験を優先する。
-> 大量メッセージが同時に来る想定はないため、バッチ効率よりレスポンス速度を重視した。
-
----
-
-## 6. Consumer 処理フロー
-
-### 6.1 全体フロー
+`POST /api/stocks` のハンドラは、認証・URL バリデーション・重複チェックを通過した後、**stock を INSERT する前に**プロバイダ別の oEmbed / メタデータ取得を実行する。取得が成功したらメタデータを揃えた状態で stock を INSERT して 201 を返す。リトライ上限まで取得できなかった場合は INSERT せず（DB ロールバック相当の効果）502 / 504 を返す。
 
 ```mermaid
 flowchart TD
-    Start[メッセージ受信] --> Validate{schemaVersion == 1?}
-    Validate -->|No| Ack[ack & ログ警告]
-    Validate -->|Yes| Switch{provider?}
+    Req[POST /api/stocks 受信] --> Auth[認証チェック]
+    Auth --> Validate[URL バリデーション + canonical 正規化]
+    Validate --> Dup[同一ユーザー × canonical_url の重複チェック]
 
-    Switch -->|speakerdeck| SD[SpeakerDeck oEmbed 取得]
-    Switch -->|docswell| DW[Docswell oEmbed 取得]
-    Switch -->|google_slides| GS[Google Slides メタデータ構築]
+    Dup -->|重複あり| C409[409 DUPLICATE_STOCK]
+    Dup -->|重複なし| Switch{provider?}
 
-    SD --> Parse[レスポンス解析・フィールド抽出]
-    DW --> Parse
-    GS --> BuildEmbed[embed URL 構築 + タイトル取得試行]
+    Switch -->|speakerdeck| SD[SpeakerDeck oEmbed 取得 + 指数バックオフ §6]
+    Switch -->|docswell| DW[Docswell oEmbed 取得 + 指数バックオフ §6]
+    Switch -->|google_slides| GS[embed URL 構築 + タイトル取得試行 §4]
 
-    Parse --> UpdateReady[UPDATE stock SET status='ready',<br/>title, author_name, embed_url, thumbnail_url]
-    BuildEmbed --> UpdateReady
+    SD --> ParseSD{抽出成功?}
+    DW --> ParseDW{抽出成功?}
+    GS --> ParseGS[常に成功（§4.5）]
 
-    Parse -->|取得失敗 & リトライ上限未到達| Retry[retry → Queue 再投入]
-    Parse -->|取得失敗 & リトライ上限到達| UpdateFailed[UPDATE stock SET status='failed']
+    ParseSD -->|Yes| Insert
+    ParseDW -->|Yes| Insert
+    ParseGS --> Insert
 
-    UpdateReady --> Done[完了]
-    Retry --> Done
-    UpdateFailed --> Done
+    ParseSD -->|恒久エラー 404/403/形式不正| C400[400 UPSTREAM_NOT_FOUND など]
+    ParseDW -->|恒久エラー 404/403/形式不正| C400
+    ParseSD -->|リトライ上限到達 5xx/タイムアウト| C5xx[502 UPSTREAM_FAILURE / 504 UPSTREAM_TIMEOUT]
+    ParseDW -->|リトライ上限到達 5xx/タイムアウト| C5xx
+
+    Insert[INSERT stock<br/>status='ready' + title + author_name + embed_url] --> C201[201 Created + stock オブジェクト]
 ```
 
-### 6.2 Consumer エントリポイント
+### 5.2 取得処理のシグネチャ
 
 ```typescript
-export default {
-  async queue(
-    batch: MessageBatch<OEmbedQueueMessage>,
-    env: Env,
-  ): Promise<void> {
-    for (const message of batch.messages) {
-      try {
-        await processMessage(message.body, env);
-        message.ack();
-      } catch (error) {
-        // retry() を呼ぶと Cloudflare Queues が再配信する
-        message.retry();
-      }
-    }
-  },
-};
-```
-
-### 6.3 プロバイダ別処理
-
-```typescript
-async function processMessage(
-  msg: OEmbedQueueMessage,
-  env: Env,
-): Promise<void> {
-  let metadata: StockMetadata;
-
-  switch (msg.provider) {
+async function fetchProviderMetadata(
+  provider: Provider,
+  canonicalUrl: string,
+  signal: AbortSignal,
+): Promise<StockMetadata> {
+  switch (provider) {
     case "speakerdeck":
-      metadata = await fetchSpeakerDeckMetadata(msg.canonicalUrl);
-      break;
+      return await fetchSpeakerDeckMetadata(canonicalUrl, signal);
     case "docswell":
-      metadata = await fetchDocswellMetadata(msg.canonicalUrl);
-      break;
+      return await fetchDocswellMetadata(canonicalUrl, signal);
     case "google_slides":
-      metadata = await fetchGoogleSlidesMetadata(msg.canonicalUrl);
-      break;
+      return await fetchGoogleSlidesMetadata(canonicalUrl, signal);
   }
-
-  await updateStock(env.DB, msg.stockId, metadata);
 }
 
 interface StockMetadata {
@@ -382,7 +290,24 @@ interface StockMetadata {
 }
 ```
 
-### 6.4 oEmbed レスポンス検証
+`signal` は §6.2 の合計タイムアウト制御に使う `AbortController` のもの。
+
+### 5.3 INSERT のタイミング
+
+メタデータ取得が成功した時点で `stocks` を INSERT する。`status` は MVP では常に `'ready'` を入れる（§7.1）。
+
+```sql
+INSERT INTO stocks (
+  id, user_id, original_url, canonical_url, provider,
+  title, author_name, thumbnail_url, embed_url, status,
+  created_at, updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?);
+```
+
+> **設計判断（INSERT を最後に置く）:** 旧仕様では status=pending で先に INSERT してから Queue Consumer が UPDATE していた。同期モデルでは取得失敗時に stock を残さない（ユーザー一覧に「失敗カード」が並ばない）ことを優先し、INSERT を最後に置く。これにより明示的な DELETE / UPDATE は不要で、失敗時は単に何も書かない。
+
+### 5.4 oEmbed レスポンス検証
 
 oEmbed レスポンスを受信した際、以下を検証する:
 
@@ -391,135 +316,131 @@ oEmbed レスポンスを受信した際、以下を検証する:
 3. `type` フィールドが `"rich"` であること
 4. embed URL が抽出できること（SpeakerDeck: `html` 内 iframe src、Docswell: `url` フィールド）
 
-検証失敗時は `OEmbedFetchError` を throw し、Consumer のリトライ処理に委ねる。
+検証失敗の扱いは §6.3 のエラー分類に従う（5xx / タイムアウトは一時的エラー、404 / 403 / 形式不正は恒久エラー）。
 
 ---
 
-## 7. リトライポリシー
+## 6. リトライポリシー（同期内・指数バックオフ）
 
-### 7.1 Cloudflare Queues のリトライ機構
+### 6.1 リトライ機構
 
-Cloudflare Queues は、Consumer が `message.retry()` を呼んだ場合にメッセージを再配信する。
+Cloudflare Queues は使用しない。`POST /api/stocks` のハンドラ内で `for` ループ + `setTimeout` による指数バックオフを実装する。
 
-| 設定項目 | 値 | 説明 |
-|---------|-----|------|
-| `max_retries` | `3` | 最大リトライ回数（初回 + 3回 = 合計4回試行） |
-| `dead_letter_queue` | `oembed-fetch-dlq` | 全リトライ失敗後の転送先 |
-| バックオフ | Cloudflare Queues の内部実装に依存 | 指数バックオフ的に再配信間隔が伸びる |
-
-### 7.2 リトライ対象の判定
-
-| ケース | リトライ | 理由 |
-|--------|---------|------|
-| oEmbed エンドポイント 5xx | Yes | プロバイダ側の一時的障害 |
-| oEmbed エンドポイント タイムアウト | Yes | ネットワーク一時障害 |
-| oEmbed エンドポイント 404 | **No** | スライドが存在しない / 非公開（恒久的エラー） |
-| oEmbed エンドポイント 403 | **No** | アクセス拒否（恒久的エラー） |
-| oEmbed レスポンスパース失敗 | **No** | レスポンス形式が想定外（恒久的エラー） |
-| DB 更新失敗 | Yes | D1 の一時的障害 |
-
-### 7.3 恒久的エラー時の処理
-
-リトライ不要な恒久的エラーの場合は、`message.retry()` ではなく `message.ack()` を呼び、stock を即座に `failed` に更新する:
+| 項目 | 値 | 備考 |
+|------|----|------|
+| 最大試行回数 | **3** | 初回 + 2 リトライ |
+| バックオフ間隔 | 0ms → 500ms → 1500ms | 1回目失敗後 500ms wait、2回目失敗後 1500ms wait |
+| 1 回あたりタイムアウト | **3 秒** | プロバイダごとの `fetch` に `AbortSignal.timeout(3000)` を渡す |
+| **合計タイムアウト予算** | **12 秒** | 試行 3×3秒 + バックオフ 0.5+1.5秒 = 11秒 + 余裕 |
+| 最終失敗時のレスポンス | 502 `UPSTREAM_FAILURE` / 504 `UPSTREAM_TIMEOUT` | DB ロールバック相当（INSERT しない、§7） |
 
 ```typescript
-try {
-  await processMessage(message.body, env);
-  message.ack();
-} catch (error) {
-  if (error instanceof PermanentError) {
-    // リトライ不要 → 即座に failed に更新
-    await markStockFailed(env.DB, message.body.stockId, error.message);
-    message.ack();
-  } else {
-    // 一時的エラー → リトライ
-    message.retry();
+async function fetchWithRetry(
+  fetcher: (signal: AbortSignal) => Promise<StockMetadata>,
+  totalBudgetMs: number = 12_000,
+): Promise<StockMetadata> {
+  const totalDeadline = AbortSignal.timeout(totalBudgetMs);
+  const backoffsMs = [0, 500, 1500];
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      await sleep(backoffsMs[attempt]);
+    }
+    if (totalDeadline.aborted) {
+      throw new UpstreamTimeoutError("total budget exhausted");
+    }
+    try {
+      const perAttemptSignal = AbortSignal.any([
+        AbortSignal.timeout(3_000),
+        totalDeadline,
+      ]);
+      return await fetcher(perAttemptSignal);
+    } catch (err) {
+      if (err instanceof PermanentError) {
+        // 404 / 403 / 形式不正 → リトライしない
+        throw err;
+      }
+      lastError = err;
+    }
   }
+  throw new UpstreamFailureError("max retries exhausted", { cause: lastError });
 }
 ```
 
-### 7.4 Dead Letter Queue
+> **設計判断:** Workers の CPU 時間制限（無料枠で 10ms / 有料枠で 30 秒）を考慮しても、`fetch` 自体は CPU 時間に計上されないため 12 秒の wall-clock 予算は実装可能。ユーザー側の体感は ui-spec.md §7.3（3 秒で進捗表示、8 秒で「もう少々お待ちください」）でカバーする。
 
-全リトライが失敗した場合、メッセージは `oembed-fetch-dlq` に転送される。
+### 6.2 合計タイムアウトの実装
 
-- DLQ のメッセージは定期的に確認する（手動 or 監視）
-- DLQ に到達した stock は `status=failed` のまま残る
-- DLQ Consumer は MVP では実装しない（将来の拡張ポイント）
+`AbortSignal.timeout(12_000)` を 1 つ作り、各試行の `fetch` に組み合わせて渡す。`AbortSignal.any([...])` で「個別タイムアウト」と「合計タイムアウト」のどちらかが先に切れた時点で abort する。
 
----
+### 6.3 エラー分類
 
-## 8. 失敗時の処理
+| ケース | 分類 | 処理 | レスポンス |
+|--------|------|------|-----------|
+| oEmbed エンドポイント 5xx | 一時的 | リトライ | リトライ上限到達時 502 `UPSTREAM_FAILURE` |
+| oEmbed エンドポイント タイムアウト | 一時的 | リトライ | リトライ上限／合計予算到達時 504 `UPSTREAM_TIMEOUT` |
+| ネットワークエラー（DNS 失敗等） | 一時的 | リトライ | リトライ上限到達時 502 `UPSTREAM_FAILURE` |
+| oEmbed エンドポイント 404 | 恒久 | リトライしない | 即座に 400 `UPSTREAM_NOT_FOUND`（スライドが存在しない／非公開） |
+| oEmbed エンドポイント 403 | 恒久 | リトライしない | 即座に 400 `UPSTREAM_FORBIDDEN`（アクセス拒否） |
+| oEmbed レスポンスパース失敗 | 恒久 | リトライしない | 即座に 502 `UPSTREAM_INVALID_RESPONSE`（プロバイダの仕様変更を疑う） |
+| Google Slides の HTML タイトル取得失敗 | 軟性失敗 | リトライしない | title=null で stock を作成（embed_url は機械的に取れる、§4.5） |
 
-### 8.1 stock テーブル更新
-
-失敗時は以下のフィールドを更新する:
-
-```sql
-UPDATE stocks
-SET status = 'failed',
-    updated_at = ?
-WHERE id = ?;
-```
-
-> **設計判断:** `error_detail` カラムは stocks テーブルに追加しない（MVP）。
-> 理由:
-> - エラー詳細は Consumer のログ（`console.error`）に出力する
-> - ユーザーへのエラー表示は「メタデータの取得に失敗しました」の固定メッセージで十分
-> - DB にエラーメッセージを保存するメリットが薄い（個人利用サービス）
-
-### 8.2 再取得フロー
-
-database.md のステータス遷移図に従い、`failed` → `pending` への再取得が可能:
-
-1. ユーザーが「再取得」ボタンを押す（将来の UI 実装）
-2. API が stock の `status` を `pending` に戻し、Queue にメッセージを再送信する
-
-> **MVP 方針:** 再取得 UI は MVP では実装しない。
-> `failed` になったスライドはユーザーが DELETE → 再 POST することで対応する。
-
-### 8.3 ユーザーへの表示
-
-| stock.status | 一覧画面での表示 |
-|-------------|----------------|
-| `pending` | ローディング表示（「メタデータ取得中...」） |
-| `ready` | embed + タイトル + メモ |
-| `failed` | エラー表示（「メタデータの取得に失敗しました」）+ 元 URL リンク + 削除ボタン |
+> **設計判断:** 旧仕様では DLQ に積んで運用者が後追いで対処する想定だったが、同期モデルではユーザーが即座にエラーメッセージを受け取り再操作する形になるため、DLQ は不要。ログ（`console.error`）でプロバイダ仕様変更などを検知する運用に変える。
 
 ---
 
-## 9. oEmbed 取得のタイムアウト
+## 7. 失敗時の処理
 
-各 oEmbed / メタデータ取得リクエストにタイムアウトを設定する:
+### 7.1 DB ロールバック（実態は INSERT しない）
 
-| 対象 | タイムアウト | 理由 |
-|------|-----------|------|
-| SpeakerDeck oEmbed | 10 秒 | 通常の API 呼び出し |
-| Docswell oEmbed | 10 秒 | 通常の API 呼び出し |
-| Google Slides HTML fetch | 10 秒 | HTML ページ取得 |
+§5.3 のとおり、メタデータ取得が成功するまで `stocks` への INSERT は実行しない。失敗時は単に INSERT が走らず、ユーザーには 4xx / 5xx を返すだけで「半端なレコード」は残らない。
 
-```typescript
-const controller = new AbortController();
-const timeoutId = setTimeout(() => controller.abort(), 10_000);
+> **設計判断:** トランザクションでの明示的 ROLLBACK は不要（INSERT がそもそも発行されないため）。ただしテーブル設計上 `status` カラムは残してあるので、将来非同期化に切り替える際に `'pending'` の挿入と Queue による UPDATE を再導入できる（database.md `status` カラムの説明を参照）。
 
-const res = await fetch(url, { signal: controller.signal });
-clearTimeout(timeoutId);
-```
+### 7.2 ユーザーへの表示
 
-タイムアウト発生時は一時的エラーとしてリトライ対象とする。
+stock 作成は成功か失敗の二択。`pending` / `failed` カードは存在しない。
+
+| API レスポンス | クライアントの表示（ui-spec.md §7.4） |
+|---------------|--------------------------------------|
+| 201 Created | 完成済みカード（title / author_name / embed_url が揃った状態）を一覧の先頭に追加 |
+| 400 `INVALID_URL` / `UNSUPPORTED_PROVIDER` 等 | フォーム下に API の `error` 文をそのまま表示 |
+| 400 `UPSTREAM_NOT_FOUND` / `UPSTREAM_FORBIDDEN` | 「スライドが見つかりません／公開されていません。URL を確認してください」 |
+| 409 `DUPLICATE_STOCK` | 「このスライドは既にストック済みです」 |
+| 502 `UPSTREAM_FAILURE` / `UPSTREAM_INVALID_RESPONSE` / 504 `UPSTREAM_TIMEOUT` | 「プロバイダから応答がありません。時間をおいて再度お試しください」+ 入力値はフォームに保持 |
+
+### 7.3 再取得 UI は不要
+
+旧仕様の「failed → pending 再取得ボタン」は同期モデルで不要になった（失敗時はそもそも stock が存在しない）。ユーザーは同じ URL を再送信するだけで再試行できる。
 
 ---
 
-## 10. セキュリティ考慮事項
+## 8. oEmbed 取得のタイムアウト
 
-### 10.1 SSRF 対策
+§6.1 に記載のとおり、同期モデルでは個別リクエストのタイムアウトを **3 秒**、合計予算を **12 秒** で運用する。プロバイダ別の値は以下:
 
-Consumer が外部 URL にリクエストを送信するため、以下を考慮する:
+| 対象 | 1 回あたり | 合計予算（試行 3 回） |
+|------|-----------|---------------------|
+| SpeakerDeck oEmbed | 3 秒 | 12 秒 |
+| Docswell oEmbed | 3 秒 | 12 秒 |
+| Google Slides HTML fetch（タイトル取得） | 3 秒 | 9 秒（embed URL は機械的に作れるためリトライしない / §4.5） |
+
+`AbortSignal.timeout(3_000)` と合計予算用の `AbortSignal.timeout(12_000)` を `AbortSignal.any([...])` で合成して `fetch` に渡す（§6.2）。タイムアウト発生時は一時的エラーとしてリトライ対象（§6.3）。
+
+---
+
+## 9. セキュリティ考慮事項
+
+### 9.1 SSRF 対策
+
+API ハンドラが外部 URL にリクエストを送信するため、以下を考慮する:
 
 - oEmbed エンドポイントのホスト名は固定（`speakerdeck.com`, `www.docswell.com`, `docs.google.com`）
-- Consumer は **canonical URL のみ** を使用してリクエストを送信する
+- API ハンドラは **canonical URL のみ** を使用してリクエストを送信する
 - canonical URL は `detectProvider` でバリデーション済みのため、任意 URL へのリクエストは発生しない
 
-### 10.2 レスポンスサイズ制限
+### 9.2 レスポンスサイズ制限
 
 oEmbed レスポンスが異常に大きい場合に備え、レスポンスボディの最大サイズを制限する:
 
@@ -533,11 +454,11 @@ const MAX_HTML_RESPONSE_SIZE = 500 * 1024;     // 500 KB
 
 ---
 
-## 11. 実装タスクとの対応
+## 10. 実装タスクとの対応
 
 | タスク | 本仕様の該当セクション |
 |--------|----------------------|
-| T-521 oEmbed フェッチサービス実装 | セクション 2, 3, 4（プロバイダ別メタデータ取得） |
-| T-522 Cloudflare Queues 設定 | セクション 5.4（wrangler.toml 設定） |
-| T-523 Queue コンシューマー実装 | セクション 5, 6, 7, 8（メッセージスキーマ、Consumer フロー、リトライ、失敗処理） |
-| T-524 oEmbed/Queue ユニットテスト | セクション 2〜4（レスポンスモック）、セクション 7（リトライシナリオ） |
+| T-521 oEmbed フェッチサービス実装 | §2, §3, §4（プロバイダ別メタデータ取得）+ §6（同期リトライ） |
+| T-522（廃止） | 同期モデル化により Cloudflare Queues 設定タスクは不要 |
+| T-523（廃止 → POST /api/stocks ハンドラへ統合） | §5（同期取得処理フロー）+ §7（失敗時の処理）。実装は stock-api-spec.md §3 のハンドラ内で完結 |
+| T-524 oEmbed ユニットテスト | §2〜§4（レスポンスモック）、§6（リトライシナリオ・タイムアウト・恒久エラー）、§7（DB に書かれないこと）|

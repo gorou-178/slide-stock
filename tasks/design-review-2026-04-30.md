@@ -7,15 +7,15 @@
 
 ## ブロッカー（実装着手前に必須）
 
-### [T-A] sync モデルへの oembed-spec.md / stock-api-spec.md 書き換え
+### [T-A] sync モデルへの oembed-spec.md / stock-api-spec.md 書き換え ✅ 完了 (v0.0.3.0)
 
-**Why:** Issue #2 の解決として `POST /api/stocks` を同期モデルに統一する設計判断（ui-spec.md §5.3.1, §7.3）を確定したため、oembed-spec.md と stock-api-spec.md の以下を書き換える必要がある:
+**Why:** Issue #2 の解決として `POST /api/stocks` を同期モデルに統一する設計判断（ui-spec.md §5.3.1, §7.3）を確定したため、oembed-spec.md と stock-api-spec.md を以下のとおり書き換えた:
 
-- oembed-spec.md §5（Queue メッセージスキーマ）, §6（Consumer 処理フロー）, §7（リトライポリシー）, §8.2（再取得フロー）→ 同期モデル版に書き換え
-- stock-api-spec.md §3.6（処理フロー）, §3.7（レスポンス例 status=pending）, §8.1 P1〜P3（テストケース）→ 同期モデル版に書き換え
-- database.md の `status` カラム扱い: MVP は常に `ready`、スキーマには残す（後方互換）
+- oembed-spec.md: 旧 §5（Queue メッセージスキーマ）/ §6（Consumer 処理フロー）/ §7（リトライポリシー）/ §8（失敗時処理） を §5（同期取得処理フロー）/ §6（同期内・指数バックオフリトライ）/ §7（DB ロールバック）に置換。タイムアウト §9 を §8 に詰めて 3 秒/12 秒予算に整合。Cloudflare Queues / DLQ への参照を全削除。
+- stock-api-spec.md: §3.2 処理フロー・§3.5 stock 挿入・§3.6 / §3.7（status=pending → ready）・§3.8（502/504 例追加）を sync モデル版に書き換え。§2.3 エラーコードに `UPSTREAM_NOT_FOUND` / `UPSTREAM_FORBIDDEN` / `UPSTREAM_FAILURE` / `UPSTREAM_INVALID_RESPONSE` / `UPSTREAM_TIMEOUT` を追加。§7 StockResponse の field コメントと StockStatus 型のコメントで「MVP は常に ready」を明記。§8.1 テストケース P1〜P3 を sync 期待値に修正、P14〜P19 のプロバイダ失敗系を追加。
+- database.md: stocks.status の説明を「MVP は常に `ready`、`pending` / `failed` は将来非同期化用にスキーマで許容」に更新。ステータス遷移図を MVP（同期モデル）と将来の非同期モデルに分けた。
 
-両仕様の冒頭にバナーは追加済み。
+**実装メモ:** architecture.md §4（シーケンス図）にも旧キューモデルの記述があり、本 PR スコープ外として残置。次タスクで対応する想定。
 
 **Effort:** 〜2h（仕様書のみ、実装は別タスク）
 

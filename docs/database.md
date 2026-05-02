@@ -26,7 +26,7 @@ erDiagram
         TEXT author_name "nullable"
         TEXT thumbnail_url "nullable"
         TEXT embed_url "nullable"
-        TEXT status "pending / ready / failed"
+        TEXT status "MVP は常に ready。pending / failed は将来非同期化用にスキーマで許容"
         TEXT created_at
         TEXT updated_at
     }
@@ -59,7 +59,7 @@ erDiagram
 
 ### stocks
 
-ストックしたスライド情報を管理する。登録時は `pending` 状態で作成され、Queue Consumer によるメタデータ取得後に `ready` になる。
+ストックしたスライド情報を管理する。MVP では同期モデル（oembed-spec.md §5 / stock-api-spec.md §3）により、`POST /api/stocks` のリクエスト内で oEmbed 取得まで完了してから `status='ready'` で INSERT する。取得失敗時は INSERT せず（DB ロールバック相当）、`pending` / `failed` のレコードは作られない。
 
 | カラム | 型 | 制約 | 説明 |
 |--------|------|------|------|
@@ -72,9 +72,11 @@ erDiagram
 | author_name | TEXT | nullable | 著者名 |
 | thumbnail_url | TEXT | nullable | サムネイルURL (外部参照) |
 | embed_url | TEXT | nullable | 埋め込み用URL |
-| status | TEXT | NOT NULL, DEFAULT 'pending' | `pending` / `ready` / `failed` |
+| status | TEXT | NOT NULL, DEFAULT 'ready' | MVP では常に `ready`。スキーマ上は `pending` / `ready` / `failed` を許容（将来非同期化用） |
 | created_at | TEXT | NOT NULL | 作成日時 (ISO 8601) |
 | updated_at | TEXT | NOT NULL | 更新日時 (ISO 8601) |
+
+> **設計判断（status カラムの扱い）:** スキーマには `pending` / `failed` を残すが、MVP では常に `ready` だけを書き込む。これは将来 Cloudflare Queues 等で非同期化する際にカラムを再利用できるようにするため（マイグレーションを増やさない）。クライアント側は `status === 'ready'` 以外を分岐する必要がない（ui-spec.md §5.3.3）。
 
 ### memos
 
@@ -93,6 +95,20 @@ erDiagram
 
 ## ステータス遷移図
 
+### MVP（同期モデル）
+
+```mermaid
+stateDiagram-v2
+    [*] --> ready : POST /api/stocks (同期 oEmbed 成功時に INSERT)
+    [*] --> Rejected : POST /api/stocks 失敗 (INSERT されない、ステータスを持つレコード自体が存在しない)
+```
+
+同期モデル（oembed-spec.md §5 / stock-api-spec.md §3）では、oEmbed 取得が成功するまで `stocks` への INSERT は実行されない。結果として MVP の運用上、stock のライフサイクルは `(存在しない) → ready` のみ。`pending` / `failed` 状態は作られない。
+
+### 将来の非同期モデル（参考、未実装）
+
+将来 Cloudflare Queues 等で非同期化する場合は次の遷移を再導入する余地がある:
+
 ```mermaid
 stateDiagram-v2
     [*] --> pending : POST /stocks
@@ -100,6 +116,8 @@ stateDiagram-v2
     pending --> failed : メタデータ取得失敗
     failed --> pending : 再取得リクエスト
 ```
+
+スキーマ上 `status` カラムが `pending` / `failed` を許容しているのはこの将来拡張に備えるためで、MVP の実装からは利用されない。
 
 ---
 
