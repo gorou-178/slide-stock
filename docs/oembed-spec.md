@@ -2,21 +2,22 @@
 
 ## 1. 概要
 
-ユーザーが URL を登録すると、`POST /api/stocks` のリクエスト内で oEmbed / メタデータ取得を**同期実行**してから 201 を返す。取得が成功した時点で stock は `title` / `author_name` / `embed_url` が揃った状態で永続化される。取得が失敗した場合は DB ロールバックでストックを作成せず、502 / 504 をクライアントに返す。
+ユーザーが URL を登録すると、`POST /api/stocks` のリクエスト内で oEmbed / メタデータ取得を**同期実行（best-effort）**する。取得が成功すれば `title` / `author_name` / `embed_url` を埋めて返し、失敗すれば**メタデータを `null` のまま 201 を返す**（stock は元 URL を保持した状態で残る）。元 URL 自体が「あとで開けばよい」価値を持つため、メタデータ未取得を 5xx とは扱わない。
 
-Cloudflare Queues / Queue Consumer / `pending` / `failed` ステータスは MVP では使用しない（将来非同期化する余地を残してスキーマには `status` カラムを残すが、MVP では常に `ready`）。同期モデルを採用する根拠は `ui-spec.md` §5.3.1 / §7.3 / `stock-api-spec.md` §3 を参照。
+Cloudflare Queues / Queue Consumer / `pending` / `failed` ステータスは使用しない（ADR-004 で削除済み、`stocks.status` カラムも migration 0003 で削除済み）。本仕様の根拠は ADR-004（Queue 廃止）、`ui-spec.md` §5.3.1 / §7.3、`stock-api-spec.md` §3 を参照。
 
 本仕様では以下を定義する:
 1. 各プロバイダの oEmbed エンドポイントとレスポンス仕様（§2 / §3）
 2. Google Slides の embed URL 構築ルール（§4）
 3. 同期取得処理フロー（§5）
-4. 指数バックオフリトライポリシー（§6）
-5. 失敗時の DB ロールバックとユーザー応答（§7）
+4. タイムアウトとエラー分類（§6）
+5. メタデータ取得失敗時のフォールバック（§7）
 
 ### 前提ドキュメント
 
+- [docs/adr/004-remove-queue.md](adr/004-remove-queue.md) — Queue 廃止と同期化の決定記録（本仕様の根拠）
 - [docs/architecture.md](architecture.md) — スライド登録フロー（シーケンス図）
-- [docs/database.md](database.md) — stocks テーブル（status は MVP では常に `ready`）
+- [docs/database.md](database.md) — stocks テーブル（status カラムは廃止）
 - [docs/provider-spec.md](provider-spec.md) — プロバイダ検出・URL 正規化
 - [docs/stock-api-spec.md](stock-api-spec.md) — `POST /api/stocks` の処理フロー
 
@@ -82,10 +83,11 @@ function extractEmbedUrl(html: string): string | null {
 
 | HTTP ステータス | 意味 | 処理 |
 |----------------|------|------|
-| 200 | 正常 | フィールド抽出 → 後続フローで stock を INSERT（§5） |
-| 404 | スライドが存在しない / 非公開 | 恒久エラー: リトライ不要、即座に 400 `UPSTREAM_NOT_FOUND` を返す（§6 / §7） |
-| 5xx | SpeakerDeck 側障害 | 一時的エラー: 指数バックオフでリトライ（§6） |
-| タイムアウト | ネットワーク／プロバイダ遅延 | 一時的エラー: 指数バックオフでリトライ（§6） |
+| 200 | 正常 | フィールド抽出 → §5 の UPDATE で stock にメタデータを反映 |
+| 404 | スライドが存在しない / 非公開 | 恒久エラー: `PermanentError` を throw → §7 のフォールバック（メタデータ null のまま stock 維持） |
+| 403 | アクセス拒否 | 恒久エラー: 同上 |
+| 5xx | SpeakerDeck 側障害 | 一般エラー: throw → §7 のフォールバック |
+| タイムアウト | ネットワーク／プロバイダ遅延（10 秒、§6） | 一般エラー: throw → §7 のフォールバック |
 
 ---
 
@@ -140,10 +142,11 @@ GET https://www.docswell.com/service/oembed?url={canonical_url}&format=json
 
 | HTTP ステータス | レスポンス | 処理 |
 |----------------|-----------|------|
-| 200 | 正常な oEmbed JSON | フィールド抽出 → 後続フローで stock を INSERT（§5） |
-| 404 | `{"status": 404, "errors": "Slide not found or private"}` | 恒久エラー: リトライ不要、即座に 400 `UPSTREAM_NOT_FOUND` を返す（§6 / §7） |
-| 5xx | サーバーエラー | 一時的エラー: 指数バックオフでリトライ（§6） |
-| タイムアウト | ネットワーク／プロバイダ遅延 | 一時的エラー: 指数バックオフでリトライ（§6） |
+| 200 | 正常な oEmbed JSON | フィールド抽出 → §5 の UPDATE で stock にメタデータを反映 |
+| 404 | `{"status": 404, "errors": "Slide not found or private"}` | 恒久エラー: `PermanentError` を throw → §7 のフォールバック（メタデータ null のまま stock 維持） |
+| 403 | アクセス拒否 | 恒久エラー: 同上 |
+| 5xx | サーバーエラー | 一般エラー: throw → §7 のフォールバック |
+| タイムアウト | ネットワーク／プロバイダ遅延（10 秒、§6） | 一般エラー: throw → §7 のフォールバック |
 
 ---
 
@@ -225,15 +228,15 @@ async function fetchGoogleSlidesTitle(canonicalUrl: string): Promise<string | nu
 
 ### 4.5 成功判定
 
-Google Slides は embed URL が canonical URL から機械的に構築できるため、**外部リクエストの結果に関わらず stock 作成は成功する**（§4.4 のとおり `embed_url` だけは必ず取れる）。タイトル取得の HTTP 失敗・タイムアウトは title=null として扱い、502 / 504 を返さない（同期モデルでも DB ロールバックの対象外）。
+Google Slides は embed URL が canonical URL から機械的に構築できるため、**外部リクエストの結果に関わらず stock 作成は成功する**（§4.4 のとおり `embed_url` だけは必ず取れる）。タイトル取得の HTTP 失敗・タイムアウトは title=null として処理を続行する（catch して `console.warn` ログのみ）。
 
 ---
 
 ## 5. 同期取得処理フロー
 
-### 5.1 全体フロー
+### 5.1 全体フロー（optimistic insert + best-effort 取得）
 
-`POST /api/stocks` のハンドラは、認証・URL バリデーション・重複チェックを通過した後、**stock を INSERT する前に**プロバイダ別の oEmbed / メタデータ取得を実行する。取得が成功したらメタデータを揃えた状態で stock を INSERT して 201 を返す。リトライ上限まで取得できなかった場合は INSERT せず（DB ロールバック相当の効果）502 / 504 を返す。
+`POST /api/stocks` のハンドラは、認証・URL バリデーション・重複チェックを通過したら、まず stock を INSERT してからプロバイダの oEmbed / メタデータ取得を試みる。取得成功時は `UPDATE` でメタデータを反映、失敗時は stock をそのまま残してメタデータ null で 201 を返す。
 
 ```mermaid
 flowchart TD
@@ -242,43 +245,45 @@ flowchart TD
     Validate --> Dup[同一ユーザー × canonical_url の重複チェック]
 
     Dup -->|重複あり| C409[409 DUPLICATE_STOCK]
-    Dup -->|重複なし| Switch{provider?}
+    Dup -->|重複なし| Insert[INSERT stock<br/>title / author_name / embed_url は null]
 
-    Switch -->|speakerdeck| SD[SpeakerDeck oEmbed 取得 + 指数バックオフ §6]
-    Switch -->|docswell| DW[Docswell oEmbed 取得 + 指数バックオフ §6]
+    Insert --> Switch{provider?}
+
+    Switch -->|speakerdeck| SD[SpeakerDeck oEmbed 取得 §2 + §6]
+    Switch -->|docswell| DW[Docswell oEmbed 取得 §3 + §6]
     Switch -->|google_slides| GS[embed URL 構築 + タイトル取得試行 §4]
 
-    SD --> ParseSD{抽出成功?}
-    DW --> ParseDW{抽出成功?}
+    SD --> CatchSD{成功?}
+    DW --> CatchDW{成功?}
     GS --> ParseGS[常に成功（§4.5）]
 
-    ParseSD -->|Yes| Insert
-    ParseDW -->|Yes| Insert
-    ParseGS --> Insert
+    CatchSD -->|Yes| Update[UPDATE stocks SET title, author_name, embed_url, thumbnail_url]
+    CatchDW -->|Yes| Update
+    ParseGS --> Update
 
-    ParseSD -->|恒久エラー 404/403/形式不正| C400[400 UPSTREAM_NOT_FOUND など]
-    ParseDW -->|恒久エラー 404/403/形式不正| C400
-    ParseSD -->|リトライ上限到達 5xx/タイムアウト| C5xx[502 UPSTREAM_FAILURE / 504 UPSTREAM_TIMEOUT]
-    ParseDW -->|リトライ上限到達 5xx/タイムアウト| C5xx
+    CatchSD -->|throw（恒久 / 一般）| Log[console.error oembed_fetch_failed §7]
+    CatchDW -->|throw（恒久 / 一般）| Log
 
-    Insert[INSERT stock<br/>status='ready' + title + author_name + embed_url] --> C201[201 Created + stock オブジェクト]
+    Update --> C201[201 Created + stock<br/>メタデータ充足]
+    Log --> C201null[201 Created + stock<br/>メタデータは null]
 ```
+
+> **設計判断（INSERT を先に置く）:** 元 URL 自体が「あとで開けばよい」という価値を持つため、メタデータ取得失敗を 5xx として扱わない。stock は INSERT 済み・メタデータ null の状態で残し、ユーザーには元 URL リンクのみのカードを表示する（ui-spec.md §5.3.3）。詳細は ADR-004 §2「エラーハンドリング」を参照。
 
 ### 5.2 取得処理のシグネチャ
 
 ```typescript
-async function fetchProviderMetadata(
+async function fetchMetadataByProvider(
   provider: Provider,
   canonicalUrl: string,
-  signal: AbortSignal,
 ): Promise<StockMetadata> {
   switch (provider) {
     case "speakerdeck":
-      return await fetchSpeakerDeckMetadata(canonicalUrl, signal);
+      return await fetchSpeakerDeckMetadata(canonicalUrl);
     case "docswell":
-      return await fetchDocswellMetadata(canonicalUrl, signal);
+      return await fetchDocswellMetadata(canonicalUrl);
     case "google_slides":
-      return await fetchGoogleSlidesMetadata(canonicalUrl, signal);
+      return await fetchGoogleSlidesMetadata(canonicalUrl);
   }
 }
 
@@ -290,143 +295,165 @@ interface StockMetadata {
 }
 ```
 
-`signal` は §6.2 の合計タイムアウト制御に使う `AbortController` のもの。
+各プロバイダ関数は単一の `fetch` 試行を行い、失敗時に例外を throw する（§6 のエラー分類）。リトライは行わない（個人ツールに過剰な複雑性を持ち込まない、ADR-004 §「課題」）。
 
-### 5.3 INSERT のタイミング
-
-メタデータ取得が成功した時点で `stocks` を INSERT する。`status` は MVP では常に `'ready'` を入れる（§7.1）。
+### 5.3 INSERT と UPDATE
 
 ```sql
+-- 1. 重複チェック通過後、すぐ INSERT（メタデータは未取得）
 INSERT INTO stocks (
   id, user_id, original_url, canonical_url, provider,
-  title, author_name, thumbnail_url, embed_url, status,
   created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- 2. oEmbed 取得が成功した場合のみ UPDATE
+UPDATE stocks
+SET title = ?, author_name = ?, embed_url = ?, thumbnail_url = ?, updated_at = ?
+WHERE id = ?;
 ```
 
-> **設計判断（INSERT を最後に置く）:** 旧仕様では status=pending で先に INSERT してから Queue Consumer が UPDATE していた。同期モデルでは取得失敗時に stock を残さない（ユーザー一覧に「失敗カード」が並ばない）ことを優先し、INSERT を最後に置く。これにより明示的な DELETE / UPDATE は不要で、失敗時は単に何も書かない。
+INSERT 文に `status` カラムは含めない（migration 0003 で削除済み、database.md）。
 
 ### 5.4 oEmbed レスポンス検証
 
 oEmbed レスポンスを受信した際、以下を検証する:
 
 1. HTTP ステータスが 200 であること
-2. Content-Type が `application/json` であること
-3. `type` フィールドが `"rich"` であること
-4. embed URL が抽出できること（SpeakerDeck: `html` 内 iframe src、Docswell: `url` フィールド）
+2. embed URL が抽出できること（SpeakerDeck: `html` 内 iframe src、Docswell: `url` フィールド）
+3. Docswell の場合は `url` フィールドが `https://*.docswell.com` であること（SSRF / オープンリダイレクト対策、§9.1）
 
-検証失敗の扱いは §6.3 のエラー分類に従う（5xx / タイムアウトは一時的エラー、404 / 403 / 形式不正は恒久エラー）。
+検証失敗時は `PermanentError`（§6.3）または一般 `Error` を throw する。`POST /api/stocks` のハンドラが catch してログを残し、UPDATE を行わずに 201 + メタデータ null を返す（§7）。
 
 ---
 
-## 6. リトライポリシー（同期内・指数バックオフ）
+## 6. タイムアウトとエラー分類
 
-### 6.1 リトライ機構
+### 6.1 タイムアウト
 
-Cloudflare Queues は使用しない。`POST /api/stocks` のハンドラ内で `for` ループ + `setTimeout` による指数バックオフを実装する。
+実装は単一試行・固定タイムアウトでシンプルに保つ。
 
 | 項目 | 値 | 備考 |
 |------|----|------|
-| 最大試行回数 | **3** | 初回 + 2 リトライ |
-| バックオフ間隔 | 0ms → 500ms → 1500ms | 1回目失敗後 500ms wait、2回目失敗後 1500ms wait |
-| 1 回あたりタイムアウト | **3 秒** | プロバイダごとの `fetch` に `AbortSignal.timeout(3000)` を渡す |
-| **合計タイムアウト予算** | **12 秒** | 試行 3×3秒 + バックオフ 0.5+1.5秒 = 11秒 + 余裕 |
-| 最終失敗時のレスポンス | 502 `UPSTREAM_FAILURE` / 504 `UPSTREAM_TIMEOUT` | DB ロールバック相当（INSERT しない、§7） |
+| 試行回数 | **1**（リトライしない） | ADR-004 §「課題」のとおり、個人ツールに指数バックオフは過剰 |
+| 1 回あたりタイムアウト | **10 秒** | `AbortController` + `setTimeout(10_000)` で `fetch` を中断 |
+| 失敗時の扱い | catch してログ + メタデータ null で 201 を返す（§7） | DB ロールバックや 5xx 返却は行わない |
 
 ```typescript
-async function fetchWithRetry(
-  fetcher: (signal: AbortSignal) => Promise<StockMetadata>,
-  totalBudgetMs: number = 12_000,
-): Promise<StockMetadata> {
-  const totalDeadline = AbortSignal.timeout(totalBudgetMs);
-  const backoffsMs = [0, 500, 1500];
+const FETCH_TIMEOUT = 10_000;  // 10 秒（worker/lib/oembed.ts:8）
 
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) {
-      await sleep(backoffsMs[attempt]);
-    }
-    if (totalDeadline.aborted) {
-      throw new UpstreamTimeoutError("total budget exhausted");
-    }
-    try {
-      const perAttemptSignal = AbortSignal.any([
-        AbortSignal.timeout(3_000),
-        totalDeadline,
-      ]);
-      return await fetcher(perAttemptSignal);
-    } catch (err) {
-      if (err instanceof PermanentError) {
-        // 404 / 403 / 形式不正 → リトライしない
-        throw err;
-      }
-      lastError = err;
-    }
+async function fetchWithTimeout(url: string, maxSize: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    // Content-Length が maxSize を超えるなら PermanentError
+    return res;
+  } catch (e) {
+    clearTimeout(timeoutId);
+    throw e;
   }
-  throw new UpstreamFailureError("max retries exhausted", { cause: lastError });
 }
 ```
 
-> **設計判断:** Workers の CPU 時間制限（無料枠で 10ms / 有料枠で 30 秒）を考慮しても、`fetch` 自体は CPU 時間に計上されないため 12 秒の wall-clock 予算は実装可能。ユーザー側の体感は ui-spec.md §7.3（3 秒で進捗表示、8 秒で「もう少々お待ちください」）でカバーする。
+> **設計判断（リトライなし）:** ADR-004 で同期化した時点で「個人ツールに retry / DLQ / バックオフは過剰」と判断済み。oEmbed が 1 回で取れなければ、ユーザーは同じ URL を再送信するだけで再試行できる（重複は 409 を返すので、stock が既にあれば「すでにストック済み」と表示される）。リトライをサーバー側に実装するより、UX をシンプルに保つ方が個人ツールには合う。
 
-### 6.2 合計タイムアウトの実装
+### 6.2 エラー分類
 
-`AbortSignal.timeout(12_000)` を 1 つ作り、各試行の `fetch` に組み合わせて渡す。`AbortSignal.any([...])` で「個別タイムアウト」と「合計タイムアウト」のどちらかが先に切れた時点で abort する。
+`worker/lib/oembed.ts` は 2 種類の例外を投げる。
 
-### 6.3 エラー分類
+| クラス | 用途 | 投げる場面 |
+|--------|------|-----------|
+| `PermanentError` | リトライしても無駄な恒久エラー | 404 / 403 / `Content-Length` がサイズ上限超過 / oEmbed レスポンスから embed URL が抽出できない / Docswell の embed URL が `*.docswell.com` ドメイン外 |
+| 一般 `Error` | ネットワーク／プロバイダ側の一時的問題 | 5xx / fetch エラー / タイムアウト |
 
-| ケース | 分類 | 処理 | レスポンス |
-|--------|------|------|-----------|
-| oEmbed エンドポイント 5xx | 一時的 | リトライ | リトライ上限到達時 502 `UPSTREAM_FAILURE` |
-| oEmbed エンドポイント タイムアウト | 一時的 | リトライ | リトライ上限／合計予算到達時 504 `UPSTREAM_TIMEOUT` |
-| ネットワークエラー（DNS 失敗等） | 一時的 | リトライ | リトライ上限到達時 502 `UPSTREAM_FAILURE` |
-| oEmbed エンドポイント 404 | 恒久 | リトライしない | 即座に 400 `UPSTREAM_NOT_FOUND`（スライドが存在しない／非公開） |
-| oEmbed エンドポイント 403 | 恒久 | リトライしない | 即座に 400 `UPSTREAM_FORBIDDEN`（アクセス拒否） |
-| oEmbed レスポンスパース失敗 | 恒久 | リトライしない | 即座に 502 `UPSTREAM_INVALID_RESPONSE`（プロバイダの仕様変更を疑う） |
-| Google Slides の HTML タイトル取得失敗 | 軟性失敗 | リトライしない | title=null で stock を作成（embed_url は機械的に取れる、§4.5） |
+現状はリトライを行わないので両者の区別は呼び出し側ではログ出力のためだけに使う。将来リトライを再導入する場合に備えて型を分けてある（`worker/lib/oembed.ts` の `PermanentError` クラス）。
 
-> **設計判断:** 旧仕様では DLQ に積んで運用者が後追いで対処する想定だったが、同期モデルではユーザーが即座にエラーメッセージを受け取り再操作する形になるため、DLQ は不要。ログ（`console.error`）でプロバイダ仕様変更などを検知する運用に変える。
+### 6.3 エラー処理マッピング
+
+| ケース | 例外 | `POST /api/stocks` の処理 | レスポンス |
+|--------|------|---------------------------|-----------|
+| oEmbed エンドポイント 200（正常） | — | UPDATE でメタデータ反映 | 201 + 完成済み stock |
+| oEmbed エンドポイント 404 / 403 | `PermanentError` | catch → `console.error` ログ → UPDATE せず | 201 + メタデータ null の stock（元 URL は保持） |
+| oEmbed エンドポイント 5xx | 一般 `Error` | catch → `console.error` ログ → UPDATE せず | 同上 |
+| ネットワークエラー / タイムアウト | 一般 `Error` | catch → `console.error` ログ → UPDATE せず | 同上 |
+| oEmbed レスポンスパース失敗 / embed URL 抽出失敗 | `PermanentError` | catch → `console.error` ログ → UPDATE せず | 同上 |
+| Docswell embed URL ドメイン外 | `PermanentError` | catch → `console.error` ログ → UPDATE せず | 同上（SSRF 対策、§9.1） |
+| Google Slides の HTML タイトル取得失敗 | 内部 catch | `console.warn` ログ → title=null で続行 | 201 + embed_url 充足 + title null |
+
+> **設計判断（5xx / 4xx を返さない）:** メタデータが取れなくても元 URL は保持されるため、ユーザーが「あとでクリックして開く」価値は残る。201 で「stock は作成された」ことだけを伝え、メタデータ未取得は UI 側の表示分岐（タイトルなし → 元 URL 表示）に任せる（ui-spec.md §5.3.3）。これにより同じ URL の再 POST も 409 で安全に扱える。
 
 ---
 
-## 7. 失敗時の処理
+## 7. メタデータ取得失敗時のフォールバック
 
-### 7.1 DB ロールバック（実態は INSERT しない）
+### 7.1 stock は残す（INSERT 済みのまま）
 
-§5.3 のとおり、メタデータ取得が成功するまで `stocks` への INSERT は実行しない。失敗時は単に INSERT が走らず、ユーザーには 4xx / 5xx を返すだけで「半端なレコード」は残らない。
+§5.1 のとおり、メタデータ取得失敗時は **stock を削除せずそのまま残す**。`title` / `author_name` / `embed_url` は INSERT 時の null のまま。トランザクションは使わない（`INSERT` と `UPDATE` は別トランザクション扱い、UPDATE が走らなければ初期状態のレコードが残る）。
 
-> **設計判断:** トランザクションでの明示的 ROLLBACK は不要（INSERT がそもそも発行されないため）。ただしテーブル設計上 `status` カラムは残してあるので、将来非同期化に切り替える際に `'pending'` の挿入と Queue による UPDATE を再導入できる（database.md `status` カラムの説明を参照）。
+```typescript
+try {
+  metadata = await fetchMetadataByProvider(provider, canonicalUrl);
+  await env.DB.prepare(`UPDATE stocks SET title = ?, ... WHERE id = ?`)
+    .bind(metadata.title, ..., stockId).run();
+  console.log(JSON.stringify({ action: "oembed_success", stockId, provider }));
+} catch (error) {
+  console.error(JSON.stringify({
+    action: "oembed_fetch_failed",
+    stockId,
+    provider,
+    error: String(error),
+  }));
+  // メタデータなしで続行（stock は INSERT 済み）
+}
+
+return Response.json({
+  id: stockId,
+  original_url: url,
+  canonical_url: canonicalUrl,
+  provider,
+  title: metadata.title,           // 失敗時は null
+  author_name: metadata.authorName, // 失敗時は null
+  thumbnail_url: metadata.thumbnailUrl,
+  embed_url: metadata.embedUrl,    // 失敗時は null
+  memo_text: null,
+  created_at: now,
+  updated_at: now,
+}, { status: 201 });
+```
 
 ### 7.2 ユーザーへの表示
 
-stock 作成は成功か失敗の二択。`pending` / `failed` カードは存在しない。
+stock 作成は INSERT 段階で確定し、201 が返る。メタデータ取得の成否に関わらず、クライアントは新しいストックカードを一覧の先頭に追加する（`pending` / `failed` 状態は UI に存在しない、ui-spec.md §5.3.3）。
 
 | API レスポンス | クライアントの表示（ui-spec.md §7.4） |
 |---------------|--------------------------------------|
-| 201 Created | 完成済みカード（title / author_name / embed_url が揃った状態）を一覧の先頭に追加 |
-| 400 `INVALID_URL` / `UNSUPPORTED_PROVIDER` 等 | フォーム下に API の `error` 文をそのまま表示 |
-| 400 `UPSTREAM_NOT_FOUND` / `UPSTREAM_FORBIDDEN` | 「スライドが見つかりません／公開されていません。URL を確認してください」 |
+| 201 Created（メタデータ充足） | 完成済みカード: タイトル / 著者 / embed プレビュー |
+| 201 Created（メタデータ null） | フォールバックカード: 元 URL のリンクを「タイトル」位置に表示、provider バッジは付ける、embed プレビューなし |
+| 400 `INVALID_URL` / `UNSUPPORTED_PROVIDER` / `INVALID_FORMAT` / `UNSUPPORTED_URL_TYPE` | フォーム下に API の `error` 文をそのまま表示 |
 | 409 `DUPLICATE_STOCK` | 「このスライドは既にストック済みです」 |
-| 502 `UPSTREAM_FAILURE` / `UPSTREAM_INVALID_RESPONSE` / 504 `UPSTREAM_TIMEOUT` | 「プロバイダから応答がありません。時間をおいて再度お試しください」+ 入力値はフォームに保持 |
+| 401 `UNAUTHORIZED` | `/login` にリダイレクト |
 
 ### 7.3 再取得 UI は不要
 
-旧仕様の「failed → pending 再取得ボタン」は同期モデルで不要になった（失敗時はそもそも stock が存在しない）。ユーザーは同じ URL を再送信するだけで再試行できる。
+メタデータ未取得の stock も「ストック済み」として `canonical_url` で重複判定されるため、ユーザーが同じ URL を再送信しても 409 が返るだけで再取得は走らない。再取得を行いたい場合は DELETE → 再 POST の手順になる（MVP では再取得 UI を提供しない、ADR-004）。
+
+将来再取得 UI を追加する場合は、stock の `embed_url` / `title` が null のものに対して「再取得」ボタンを出し、`POST /api/stocks/:id/refetch` 等の専用エンドポイントを追加する設計になる（MVP スコープ外）。
 
 ---
 
 ## 8. oEmbed 取得のタイムアウト
 
-§6.1 に記載のとおり、同期モデルでは個別リクエストのタイムアウトを **3 秒**、合計予算を **12 秒** で運用する。プロバイダ別の値は以下:
+§6.1 に記載のとおり、同期モデルでは単一試行・固定タイムアウトを使う。
 
-| 対象 | 1 回あたり | 合計予算（試行 3 回） |
-|------|-----------|---------------------|
-| SpeakerDeck oEmbed | 3 秒 | 12 秒 |
-| Docswell oEmbed | 3 秒 | 12 秒 |
-| Google Slides HTML fetch（タイトル取得） | 3 秒 | 9 秒（embed URL は機械的に作れるためリトライしない / §4.5） |
+| 対象 | タイムアウト | 備考 |
+|------|-----------|------|
+| SpeakerDeck oEmbed | 10 秒 | `worker/lib/oembed.ts:8` の `FETCH_TIMEOUT` |
+| Docswell oEmbed | 10 秒 | 同上 |
+| Google Slides HTML fetch（タイトル取得） | 10 秒 | 失敗しても `embed_url` は機械的に作れるため stock 作成自体は成功する（§4.5） |
 
-`AbortSignal.timeout(3_000)` と合計予算用の `AbortSignal.timeout(12_000)` を `AbortSignal.any([...])` で合成して `fetch` に渡す（§6.2）。タイムアウト発生時は一時的エラーとしてリトライ対象（§6.3）。
+`AbortController` + `setTimeout(10_000)` の組み合わせで実装。タイムアウトは一般 `Error` として throw され、`POST /api/stocks` のハンドラ側で catch して §7 のフォールバックに移行する。
 
 ---
 
@@ -456,9 +483,9 @@ const MAX_HTML_RESPONSE_SIZE = 500 * 1024;     // 500 KB
 
 ## 10. 実装タスクとの対応
 
-| タスク | 本仕様の該当セクション |
-|--------|----------------------|
-| T-521 oEmbed フェッチサービス実装 | §2, §3, §4（プロバイダ別メタデータ取得）+ §6（同期リトライ） |
-| T-522（廃止） | 同期モデル化により Cloudflare Queues 設定タスクは不要 |
-| T-523（廃止 → POST /api/stocks ハンドラへ統合） | §5（同期取得処理フロー）+ §7（失敗時の処理）。実装は stock-api-spec.md §3 のハンドラ内で完結 |
-| T-524 oEmbed ユニットテスト | §2〜§4（レスポンスモック）、§6（リトライシナリオ・タイムアウト・恒久エラー）、§7（DB に書かれないこと）|
+| タスク | 本仕様の該当セクション | 実装ファイル |
+|--------|----------------------|------------|
+| T-521 oEmbed フェッチサービス実装 | §2, §3, §4（プロバイダ別メタデータ取得）+ §6（タイムアウト + エラー分類） | `worker/lib/oembed.ts` |
+| T-522（廃止） | ADR-004 で Cloudflare Queues 廃止 | — |
+| T-523（廃止 → POST /api/stocks ハンドラへ統合） | §5（同期取得処理フロー）+ §7（失敗時のフォールバック） | `worker/handlers/stock-create.ts` |
+| T-524 oEmbed ユニットテスト | §2〜§4（プロバイダ別レスポンスモック）、§6.3（PermanentError / 一般 Error の分類）、§7（メタデータ取得失敗時も stock が残ること） | `worker/lib/oembed.test.ts`, `worker/handlers/stocks.test.ts`（一部 stock-create のテスト） |

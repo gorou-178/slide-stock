@@ -43,7 +43,7 @@ graph TB
 
 ## リクエストフロー
 
-### スライド登録フロー（同期モデル）
+### スライド登録フロー（同期モデル: optimistic insert）
 
 ```mermaid
 sequenceDiagram
@@ -61,30 +61,24 @@ sequenceDiagram
         API-->>FE: 409 DUPLICATE_STOCK
         FE-->>User: 「既にストック済み」
     else 重複なし
-        Note over API,P: 同期 oEmbed 取得<br/>指数バックオフ 3 回 / 各 3 秒 / 合計 12 秒予算
-        API->>P: oEmbed / メタデータ取得（試行 1）
+        API->>D1: INSERT stock<br/>(メタデータ未取得、title / embed_url は NULL)
+        Note over API,P: 同期 oEmbed 取得（best-effort、リトライなし、各 10 秒タイムアウト）
+        API->>P: oEmbed / メタデータ取得
         alt 成功
             P-->>API: title, author, embed_url
-            API->>D1: INSERT stock<br/>(status='ready', メタデータ充足)
-            API-->>FE: 201 Created（完成済み stock）
+            API->>D1: UPDATE stocks SET title = ?, embed_url = ?, ...
+            API-->>FE: 201 Created（メタデータ充足）
             FE-->>User: 完成済みカード即表示
-        else 一時的失敗 → リトライ
-            P-->>API: 5xx / タイムアウト
-            API->>P: 試行 2（500ms バックオフ後）
-            P-->>API: 5xx / タイムアウト
-            API->>P: 試行 3（1500ms バックオフ後）
-            P-->>API: 失敗
-            API-->>FE: 502 UPSTREAM_FAILURE / 504 UPSTREAM_TIMEOUT<br/>（DB へは何も書かない）
-            FE-->>User: 「プロバイダから応答がありません」
-        else 恒久エラー（404 / 403 / 形式不正）
-            P-->>API: 404 / 403 / 形式不正
-            API-->>FE: 400 UPSTREAM_NOT_FOUND など<br/>（DB へは何も書かない）
-            FE-->>User: 「スライドが見つかりません」
+        else 失敗（404 / 403 / 5xx / タイムアウト / 形式不正）
+            P-->>API: error
+            Note over API: catch + console.error<br/>UPDATE は実行しない
+            API-->>FE: 201 Created（メタデータ null）
+            FE-->>User: フォールバックカード表示<br/>（元 URL のリンク + provider バッジ）
         end
     end
 ```
 
-> **設計判断:** 旧仕様では `INSERT stock(status=pending)` → `enqueue` → Consumer が非同期に `UPDATE` → `status=ready/failed` の流れだったが、ユーザー体験上「pending カード」「failed カード」が並ぶ複雑さを避けるため同期モデルに統一した。stock の作成は「成功 + 完成済み」または「作成しない（エラー）」の二択。詳細は ui-spec.md §5.3.1 / §7.3、oembed-spec.md §5 / §6 / §7、stock-api-spec.md §3 を参照。
+> **設計判断（optimistic insert）:** 旧仕様では `INSERT stock(status=pending)` → `enqueue` → Consumer が非同期に `UPDATE` → `status=ready/failed` の流れだった（ADR-004 以前）。同期化後は INSERT 直後に best-effort で oEmbed を取得する設計に統一。元 URL 自体に「あとで開けばよい」価値があるため、メタデータ取得失敗時も stock を残し 201 を返す（5xx 化しない）。pending / failed の中間状態は廃止、`status` カラムも migration 0003 で物理削除。詳細は ADR-004、ui-spec.md §5.3.1 / §7.3、oembed-spec.md §5 / §6 / §7、stock-api-spec.md §3 を参照。
 
 ### 認証フロー（Authorization Code Flow）
 
@@ -160,21 +154,22 @@ SQL設計方針:
 - 正規化を意識
 - ベンダー依存構文を避ける
 
-### oEmbed メタデータ取得（同期）
+### oEmbed メタデータ取得（同期、best-effort）
 
 | 項目 | 内容 |
 |------|------|
-| 実行タイミング | `POST /api/stocks` のリクエスト内で同期実行 |
+| 実行タイミング | `POST /api/stocks` のリクエスト内で stock を INSERT した直後に同期実行 |
 | プロバイダ | SpeakerDeck oEmbed / Docswell oEmbed / Google Slides 公開 HTML |
-| リトライ | 指数バックオフ 3 回（0ms → 500ms → 1500ms）/ 各 3 秒タイムアウト / 合計 12 秒予算 |
-| 失敗時の扱い | DB へ INSERT しない（ロールバック相当）。502 `UPSTREAM_FAILURE` / 504 `UPSTREAM_TIMEOUT` を返す |
+| リトライ | なし（1 試行のみ）|
+| 1 試行タイムアウト | 10 秒（`worker/lib/oembed.ts` の `FETCH_TIMEOUT`） |
+| 失敗時の扱い | catch + `console.error`、UPDATE せず 201 を返す。stock は INSERT 済みのままメタデータ null で残る |
 
 設計方針:
-- API レスポンスは「成功 + 完成済みストック」または「作成しない（エラー）」の二択
-- `pending` / `failed` 状態を UI に持ち込まないことを優先（ポーリング・再取得 UI が不要になる）
-- 将来非同期化（Cloudflare Queues 等）に切り替える余地は `stocks.status` カラムをスキーマに残すことで確保（database.md）
+- API レスポンスは常に 201 + stock オブジェクト（メタデータ充足 or null）
+- 元 URL 自体に「あとで開けばよい」価値があるため、メタデータ未取得を 5xx 化しない
+- `status` カラム / `pending` / `failed` 状態は廃止（ADR-004、migration 0003）
 
-詳細は oembed-spec.md §5 / §6 / §7、stock-api-spec.md §3 を参照。
+詳細は ADR-004、oembed-spec.md §5 / §6 / §7、stock-api-spec.md §3 を参照。
 
 ---
 
