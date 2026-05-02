@@ -4,7 +4,7 @@
 
 ユーザーが URL を登録すると、`POST /api/stocks` のリクエスト内で oEmbed / メタデータ取得を**同期実行**してから 201 を返す。取得が成功した時点で stock は `title` / `author_name` / `embed_url` が揃った状態で永続化される。取得が失敗した場合は DB ロールバックでストックを作成せず、502 / 504 をクライアントに返す。
 
-Cloudflare Queues / Queue Consumer / `pending` / `failed` ステータスは MVP では使用しない（将来非同期化する余地を残してスキーマには `status` カラムを残すが、MVP では常に `ready`）。同期モデルを採用する根拠は `ui-spec.md` §5.3.1 / §7.3 / `stock-api-spec.md` §3 を参照。
+Cloudflare Queues / Queue Consumer / `pending` / `failed` ステータスは MVP では使用しない。`stocks.status` カラム自体も廃止（migration 0003 / ADR-009 §4-3）。同期モデル + rollback semantics + status 廃止の根拠は `ui-spec.md` §5.3.1 / §7.3、`stock-api-spec.md` §3、`docs/adr/009-spec-ssot-and-sync-rollback.md` を参照。
 
 本仕様では以下を定義する:
 1. 各プロバイダの oEmbed エンドポイントとレスポンス仕様（§2 / §3）
@@ -16,7 +16,7 @@ Cloudflare Queues / Queue Consumer / `pending` / `failed` ステータスは MVP
 ### 前提ドキュメント
 
 - [docs/architecture.md](architecture.md) — スライド登録フロー（シーケンス図）
-- [docs/database.md](database.md) — stocks テーブル（status は MVP では常に `ready`）
+- [docs/database.md](database.md) — stocks テーブル（status カラムは廃止）
 - [docs/provider-spec.md](provider-spec.md) — プロバイダ検出・URL 正規化
 - [docs/stock-api-spec.md](stock-api-spec.md) — `POST /api/stocks` の処理フロー
 
@@ -212,7 +212,7 @@ async function fetchGoogleSlidesTitle(canonicalUrl: string): Promise<string | nu
 **制約:**
 - 非公開のプレゼンテーションでは 401/403 が返り、タイトル取得不可（`null`）
 - Google のレスポンスは JavaScript レンダリング前提のため、`<title>` タグが空の場合がある（`null`）
-- タイトル取得失敗は stock の `status` には影響しない（`embed_url` が構築できれば `ready`）
+- タイトル取得失敗は stock 作成成否に影響しない（`embed_url` が構築できれば 201 + stock 作成、軟性失敗扱い）
 
 ### 4.4 処理まとめ
 
@@ -261,7 +261,7 @@ flowchart TD
     ParseSD -->|リトライ上限到達 5xx/タイムアウト| C5xx[502 UPSTREAM_FAILURE / 504 UPSTREAM_TIMEOUT]
     ParseDW -->|リトライ上限到達 5xx/タイムアウト| C5xx
 
-    Insert[INSERT stock<br/>status='ready' + title + author_name + embed_url] --> C201[201 Created + stock オブジェクト]
+    Insert[INSERT stock<br/>title + author_name + embed_url + thumbnail_url] --> C201[201 Created + stock オブジェクト]
 ```
 
 ### 5.2 取得処理のシグネチャ
@@ -294,18 +294,18 @@ interface StockMetadata {
 
 ### 5.3 INSERT のタイミング
 
-メタデータ取得が成功した時点で `stocks` を INSERT する。`status` は MVP では常に `'ready'` を入れる（§7.1）。
+メタデータ取得が成功した時点で `stocks` を INSERT する。`status` カラムは廃止のため指定しない（database.md / ADR-009 §4-3）。
 
 ```sql
 INSERT INTO stocks (
   id, user_id, original_url, canonical_url, provider,
-  title, author_name, thumbnail_url, embed_url, status,
+  title, author_name, thumbnail_url, embed_url,
   created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 ```
 
-> **設計判断（INSERT を最後に置く）:** 旧仕様では status=pending で先に INSERT してから Queue Consumer が UPDATE していた。同期モデルでは取得失敗時に stock を残さない（ユーザー一覧に「失敗カード」が並ばない）ことを優先し、INSERT を最後に置く。これにより明示的な DELETE / UPDATE は不要で、失敗時は単に何も書かない。
+> **設計判断（INSERT を最後に置く）:** 旧仕様では status=pending で先に INSERT してから Queue Consumer が UPDATE していた。同期モデル + rollback semantics（ADR-009 §4-2）では取得失敗時に stock を残さない（ユーザー一覧に「失敗カード」が並ばない）ことを優先し、INSERT を最後に置く。これにより明示的な DELETE / UPDATE は不要で、失敗時は単に何も書かない。INSERT 時の UNIQUE 制約違反（並列レース）と一般 D1 エラーの扱いは stock-api-spec.md §3.6 を参照。
 
 ### 5.4 oEmbed レスポンス検証
 
@@ -396,7 +396,7 @@ async function fetchWithRetry(
 
 §5.3 のとおり、メタデータ取得が成功するまで `stocks` への INSERT は実行しない。失敗時は単に INSERT が走らず、ユーザーには 4xx / 5xx を返すだけで「半端なレコード」は残らない。
 
-> **設計判断:** トランザクションでの明示的 ROLLBACK は不要（INSERT がそもそも発行されないため）。ただしテーブル設計上 `status` カラムは残してあるので、将来非同期化に切り替える際に `'pending'` の挿入と Queue による UPDATE を再導入できる（database.md `status` カラムの説明を参照）。
+> **設計判断:** トランザクションでの明示的 ROLLBACK は不要（INSERT がそもそも発行されないため）。`status` カラムは ADR-009 §4-3 で廃止のまま（migration 0003 後の状態を canonical とする）。将来非同期化に切り替える場合はその時点で migration を 1 本足して `status` を再導入する（YAGNI）。
 
 ### 7.2 ユーザーへの表示
 
