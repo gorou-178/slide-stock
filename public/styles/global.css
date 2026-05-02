@@ -3,6 +3,43 @@
    ui-spec.md セクション 8
    ======================================== */
 
+/* --- Self-hosted fonts (ui-spec.md §8.2.1) ---
+   Geist:  Latin / digits / symbols (Variable, ~68 KB)
+   IBM Plex Sans JP: kana + CJK punctuation (Regular + Bold, ~35 KB each).
+   Kanji falls back to the OS Japanese font (Hiragino on macOS, Yu Gothic on
+   Windows, Noto Sans JP on Linux) because IBM Plex Sans JP has no Variable
+   build and full-CJK subsets would exceed the budget by 10x. */
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/Geist-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/GeistMono-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "IBM Plex Sans JP";
+  src: url("/fonts/IBMPlexSansJP-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+  font-style: normal;
+  unicode-range: U+0020-007F, U+3000-30FF, U+FF00-FFEF;
+}
+@font-face {
+  font-family: "IBM Plex Sans JP";
+  src: url("/fonts/IBMPlexSansJP-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+  font-style: normal;
+  unicode-range: U+0020-007F, U+3000-30FF, U+FF00-FFEF;
+}
+
 /* --- Design Tokens --- */
 :root {
   --color-primary: #1a73e8;
@@ -16,7 +53,12 @@
   --color-success: #188038;
   --color-warning: #f9ab00;
 
-  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Body / display: Geist for Latin, IBM Plex Sans JP for kana, then OS JP for kanji.
+     Mono: Geist Mono for code/URLs. ui-spec.md §8.2 */
+  --font-family: "Geist", "IBM Plex Sans JP", "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-family-display: "Geist", "IBM Plex Sans JP", "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-family-body: var(--font-family);
+  --font-family-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --font-size-base: 16px;
   --font-size-sm: 14px;
   --font-size-lg: 18px;

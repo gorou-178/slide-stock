@@ -7,8 +7,22 @@
 
 ## 言語
 
-- ユーザー向けの応答・説明・AskUserQuestion・レポート・retro/レビュー出力はすべて**日本語**で返す
-- コード、ファイル名、コミットメッセージ、CHANGELOG、PR タイトル/本文、Git 履歴に残るものは**英語のまま**
+ユーザーや読者が目にする**散文**は日本語、機械が解釈する**識別子・規約文字列**は英語、で切り分ける。
+
+### 日本語で書く
+- ユーザー向けの応答・説明・AskUserQuestion・レポート・retro/レビュー出力
+- **PR / Issue の本文（description / body）、レビューコメント**
+- **CHANGELOG.md のエントリ本文**（`### Added` / `### Changed` 配下の bullet など散文部分）
+- ドキュメント（`docs/`、`tasks/` など）
+
+### 英語のまま残す
+- コード、ファイル名、パス
+- コミットメッセージ（`feat:` `chore:` 等の Conventional Commits 慣習）
+- **PR / コミットの「タイトル」**（`v0.0.2.0 feat(fonts): ...` 形式は GitHub/CI 互換性のため）
+- **CHANGELOG のセクション見出し**（`## [X.Y.Z.W] - YYYY-MM-DD` / `### Added` / `### Changed` / `### Fixed` / `### Removed` などの Keep a Changelog 規約）
+- 設定ファイル内の値、環境変数名
+
+`/ship`・`/review`・`/qa` 等の skill が英語テンプレートを提供している場合でも、本文を投稿/コミットする前に上記ルールに従って翻訳する。
 
 ---
 
