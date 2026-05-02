@@ -19,11 +19,13 @@
 
 **Effort:** 〜2h（仕様書のみ、実装は別タスク）
 
-### [T-B] Geist + IBM Plex Sans JP フォント self-host
+### [T-B] Geist + IBM Plex Sans JP フォント self-host ✅ 完了 (v0.0.2.0)
 
 **Why:** ui-spec.md §8.2 / §8.2.1 で確定した Geist (Vercel 製、SIL OFL) + IBM Plex Sans JP (IBM 製、SIL OFL) を `public/fonts/` に self-host する必要がある。Variable フォント (.woff2) と subset 設定（unicode-range）も含む。
 
 **Effort:** 〜1h（フォントダウンロード + sub-set + preload 設定）
+
+**実装メモ:** IBM Plex Sans JP には Variable 版が存在せず、フル CJK サブセットは 1.7 MB / weight に達するため、Regular + Bold の 2 weight で kana + CJK 記号 + ASCII のみ subset し、漢字は OS フォント（Hiragino → Yu Gothic → Noto Sans JP）にフォールバック。総計 ~210 KB（spec 上の 300 KB バジェット内）。詳細は ui-spec.md §8.2.1 を更新済み。
 
 ### [T-C] LP ヒーロースクリーンショット作成
 

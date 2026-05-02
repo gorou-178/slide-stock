@@ -828,7 +828,7 @@ Geist (Vercel 製、SIL OFL ライセンス、Variable) と IBM Plex Sans JP (IB
 ```html
 <!-- BaseLayout.astro の <head> 内 -->
 <link rel="preload" href="/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/fonts/IBMPlexSansJP-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/IBMPlexSansJP-Regular.woff2" as="font" type="font/woff2" crossorigin>
 ```
 
 ```css
@@ -849,24 +849,37 @@ Geist (Vercel 製、SIL OFL ライセンス、Variable) と IBM Plex Sans JP (IB
 }
 @font-face {
   font-family: "IBM Plex Sans JP";
-  src: url("/fonts/IBMPlexSansJP-Variable.woff2") format("woff2-variations");
-  font-weight: 100 700;
+  src: url("/fonts/IBMPlexSansJP-Regular.woff2") format("woff2");
+  font-weight: 400;
   font-display: swap;
   font-style: normal;
-  unicode-range: U+3000-30FF, U+4E00-9FFF, U+FF00-FFEF;  /* 日本語+ASCII記号のみ */
+  unicode-range: U+0020-007F, U+3000-30FF, U+FF00-FFEF;  /* kana + CJK punct + ASCII */
+}
+@font-face {
+  font-family: "IBM Plex Sans JP";
+  src: url("/fonts/IBMPlexSansJP-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+  font-style: normal;
+  unicode-range: U+0020-007F, U+3000-30FF, U+FF00-FFEF;
 }
 ```
 
-> **設計判断:** Geist は欧文・数字・記号を担当、IBM Plex Sans JP は日本語を担当する分業構成。`unicode-range` で日本語フォントは日本語グリフのみロード（〜800KB → ~150KB に削減）。`font-display: swap` で初描画は system-ui で表示、フォント到着後にスワップ（FOUT 容認、blocking しない）。
+> **設計判断:** Geist は欧文・数字・記号、IBM Plex Sans JP は kana と CJK 記号を担当する分業構成。
+>
+> **漢字は OS の日本語フォントにフォールバック**（Hiragino Kaku Gothic ProN → Yu Gothic → Noto Sans JP の順）。IBM Plex Sans JP は variable 版が存在せず、フル CJK サブセット（U+4E00-9FFF を含む）は 1.7 MB / weight に達するため、kana のみ self-host し、漢字は OS フォントに任せることでバジェット ~300KB を維持する。kana の活字フレーバーが UI の印象を支配するため、視覚的な分業として機能する。
+>
+> `font-display: swap` で初描画は system-ui で表示、フォント到着後にスワップ（FOUT 容認、blocking しない）。
 
 **ファイルサイズ目安（subset 後）:**
 
 | ファイル | サイズ |
 |---------|--------|
-| Geist-Variable.woff2 | ~80 KB |
+| Geist-Variable.woff2 | ~68 KB |
 | GeistMono-Variable.woff2 | ~70 KB |
-| IBMPlexSansJP-Variable.woff2（日本語+記号サブセット） | ~150 KB |
-| 合計 | ~300 KB |
+| IBMPlexSansJP-Regular.woff2（kana+ASCII subset） | ~36 KB |
+| IBMPlexSansJP-Bold.woff2（kana+ASCII subset） | ~37 KB |
+| 合計 | ~210 KB |
 
 Cloudflare Pages の CDN 配信 + 1年の immutable cache で実質的なリピート訪問コストはゼロ。
 
