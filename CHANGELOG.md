@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to a 4-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.0.3.1] - 2026-05-02
+
+### Changed
+- `docs/architecture.md` を sync モデルに整合（v0.0.3.0 / T-A のフォローアップ）。システム全体構成図から Cloudflare Queues / Queue Consumer を削除し、`API → oEmbed Provider` の同期取得エッジに置換。スライド登録のシーケンス図を「pending INSERT → enqueue → 非同期 UPDATE」から「重複チェック → 同期 oEmbed 取得（指数バックオフ 3 回 / 各 3 秒 / 合計 12 秒予算）→ 成功時のみ `status='ready'` で 1 回 INSERT」に書き換え、リトライ／恒久エラー／成功の各分岐を明示。技術構成セクションの「非同期処理」を「oEmbed メタデータ取得（同期）」に改題し、リトライ予算と失敗時の DB ロールバック方針を記述。コスト最適化方針の Cloudflare Queues 行を「MVP では使用しない（同期モデル）」へ更新。
+
 ## [0.0.3.0] - 2026-05-02
 
 ### Changed
