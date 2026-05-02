@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to a 4-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.0.3.2] - 2026-05-02
+
+### Changed
+- **仕様と実装の整合性回復（v0.0.3.0 / v0.0.3.1 で書いた spec が ADR-004 / migration 0003 / 実コードの実態とずれていたのを訂正）**。実装は `worker/handlers/stock-create.ts` で「重複チェック → INSERT → best-effort で oEmbed 取得 → 成功なら UPDATE / 失敗なら catch + ログのみで 201 を返す」の optimistic insert モデル。`status` カラムは migration 0003 で物理削除済み。リトライは行わず 1 試行 / 10 秒タイムアウトのみ。`UPSTREAM_FAILURE` / `UPSTREAM_TIMEOUT` 等のエラーコードは存在しない。これらの実装事実を全主要仕様ドキュメントに反映:
+  - `docs/oembed-spec.md`: §1 概要を ADR-004 + migration 0003 ベースに刷新。§5 を「optimistic insert + best-effort 取得」のフロー図と SQL に書き換え（INSERT 先 → UPDATE 後）。§6 のリトライポリシーを「リトライなし、10 秒タイムアウト、PermanentError と一般 Error の 2 分類」に簡素化。§7 を「stock は INSERT 済みのまま残し、メタデータ null の 201 を返す」に書き換え（DB ロールバック記述を削除）。§8 タイムアウトを 10 秒に統一。§10 実装タスク表に対応ファイルパスを追記。
+  - `docs/stock-api-spec.md`: §2.3 のエラーコード一覧から `UPSTREAM_NOT_FOUND` / `UPSTREAM_FORBIDDEN` / `UPSTREAM_FAILURE` / `UPSTREAM_INVALID_RESPONSE` / `UPSTREAM_TIMEOUT` を削除（実装にない）。§3.2 処理フローを「INSERT → best-effort 取得 → 成功なら UPDATE / 失敗なら null のまま」に。§3.5 / §3.6 を「先に INSERT、その後 best-effort 取得」に書き換え。§3.7 にメタデータ充足時と取得失敗時（メタデータ null）の 2 例を併記。§3.8 から `UPSTREAM_*` の 400/502/504 例を削除し、プロバイダ取得失敗は API エラー扱いではない旨を注記。§4 / §5 の SELECT クエリと JSON 例から `s.status` / `"status"` を削除。§7 `StockResponse` 型から `status: StockStatus` フィールドを削除し、`StockStatus` 型自体も削除。§8.1 テストケースを「正常系 (P1〜P4)」「oEmbed 取得失敗 (P14〜P20、いずれも 201 + メタデータ null + stock は DB に残る)」「バリデーション・認証・重複 (P5〜P13)」の 3 グループに再構成。
+  - `docs/database.md`: stocks テーブル定義から `status` カラムを削除。マイグレーション履歴を §「マイグレーション履歴」として明記（0001 init / 0002 unique / 0003 drop_status）。「ステータス遷移図」を「stock のライフサイクル」に置換し、`embed_url IS NULL` 判定で 2 状態を区別する旨を記述。ER 図のフィールドコメントも `null` の意味を「oEmbed 取得失敗時」に統一。
+  - `docs/architecture.md`: スライド登録シーケンス図を optimistic insert に書き換え（INSERT → 取得試行 → 成功 UPDATE / 失敗 catch + 201 return）。リトライ予算 12 秒の記述を削除し、1 試行 10 秒タイムアウトに統一。「oEmbed メタデータ取得（同期）」セクションの表を「リトライなし、失敗時も 201、stock は INSERT 済みのまま」に更新。
+  - `docs/ui-spec.md`: §5.3.1 送信処理を 11 ステップに整理し、201 + メタデータ充足 / 201 + メタデータ null / 早期エラーの 3 経路を明記。`502 / 504 UPSTREAM_FAILURE` の表記を削除。「設計判断（同期モデル）」を ADR-004 ベースに刷新。§5.3.3 の表示内容を `embed_url` 有無で分岐する 2 通り（通常カード / フォールバックカード）に書き換え。§5.4.1 の `embed_url === null` の文言を更新。§7.3 のサーバー側タイムアウト記述を「合計 12 秒」から「10 秒」に修正。§7.4 のエラー状態表からプロバイダ取得失敗 (502/504) 行を削除し、プロバイダ失敗が API エラー扱いではない旨を注記。
+
+### Removed
+- `tasks/design-review-2026-04-30.md` の T-A 完了マーク（v0.0.3.0）に紐づいていた spec の主張のうち、実装と矛盾していた以下を仕様から撤回:
+  - 「失敗時の DB ロールバック / INSERT しない」
+  - 「指数バックオフ 3 回 / 各 3 秒 / 合計 12 秒予算」
+  - 「`UPSTREAM_NOT_FOUND` / `UPSTREAM_FORBIDDEN` / `UPSTREAM_FAILURE` / `UPSTREAM_INVALID_RESPONSE` / `UPSTREAM_TIMEOUT` エラーコード」
+  - 「`status` カラムを将来非同期化用にスキーマで残す」（migration 0003 で削除済みのため）
+  - 「`StockStatus` 型」「レスポンスの `status` フィールド」
+
 ## [0.0.3.1] - 2026-05-02
 
 ### Changed
