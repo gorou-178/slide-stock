@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to a 4-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.0.3.0] - 2026-05-02
+
+### Changed
+- T-A 完了: `docs/oembed-spec.md` を sync モデル前提に書き換え。旧 §5（Cloudflare Queues メッセージスキーマ）／§6（Consumer 処理フロー）／§7（Queue リトライ + DLQ）／§8（失敗時 UPDATE と再取得フロー）を、§5（同期取得処理フロー）／§6（同期内・指数バックオフ 3 回 / 各 3 秒 / 合計 12 秒予算）／§7（DB ロールバック相当・ユーザー応答）に全面置換。タイムアウト記述（旧 §9 → §8）を 3 秒 / 12 秒予算に整合。Cloudflare Queues / DLQ / `OEMBED_QUEUE.send` / `wrangler.toml` キュー設定への参照を全削除。
+- T-A 完了: `docs/stock-api-spec.md` を sync モデル前提に書き換え。§3.2 処理フローを「INSERT 前に同期 oEmbed 取得」へ、§3.5 / §3.6 を `status='ready'` での 1 回 INSERT へ、§3.7 のレスポンス例を完成済みストック（title / author_name / embed_url 充足）へ更新。§2.3 エラーコード一覧に `UPSTREAM_NOT_FOUND` / `UPSTREAM_FORBIDDEN`（恒久エラー）/ `UPSTREAM_FAILURE` / `UPSTREAM_INVALID_RESPONSE` / `UPSTREAM_TIMEOUT` を追加。§3.8 に 502 / 504 / `UPSTREAM_NOT_FOUND` のレスポンス例を追加。§7 の `StockResponse` フィールドコメントと `StockStatus` 型コメントで「MVP は常に `ready`、`pending` / `failed` は将来非同期化用にスキーマで許容」を明記。§8.1 テストケース P1〜P3 を sync 期待値（status=`"ready"`、メタデータ充足）に修正、P4b（Google Slides の HTML 取得失敗を軟性失敗として扱う）と P14〜P19（プロバイダ 404 / 403 / 5xx 連続失敗 / タイムアウト / レスポンス形式不正 / 失敗時に stock が作られない確認）を追加。
+- T-A 完了: `docs/database.md` の stocks テーブル定義を「MVP は常に `ready`、`pending` / `failed` は将来非同期化用にスキーマで許容」へ刷新（DEFAULT も `'pending'` から `'ready'` に変更）。ステータス遷移図を MVP（同期モデル: 「存在しない → ready」のみ）と将来の非同期モデル（参考、未実装）の 2 セクションに分けた。ER 図の status コメントも同期モデル基準に更新。
+
+### Removed
+- `docs/oembed-spec.md` 冒頭の TODO バナー、`docs/stock-api-spec.md` 冒頭の TODO バナーを削除（本 PR で sync モデルへの書き換えが完了したため）。
+
 ## [0.0.2.0] - 2026-05-02
 
 ### Added
