@@ -17,16 +17,15 @@ erDiagram
     }
 
     stocks {
-        TEXT id PK
+        TEXT id PK "UUID v7"
         TEXT user_id FK "users.id"
         TEXT original_url "ユーザー入力URL"
         TEXT canonical_url "正規化URL"
         TEXT provider "speakerdeck / docswell / google_slides"
-        TEXT title "nullable"
-        TEXT author_name "nullable"
-        TEXT thumbnail_url "nullable"
-        TEXT embed_url "nullable"
-        TEXT status "MVP は常に ready。pending / failed は将来非同期化用にスキーマで許容"
+        TEXT title "nullable - Google Slides で HTML 取得失敗時のみ null"
+        TEXT author_name "nullable - Google Slides は常に null"
+        TEXT thumbnail_url "nullable - MVP は常に null"
+        TEXT embed_url "nullable - 同期モデルでは原則 null にならない"
         TEXT created_at
         TEXT updated_at
     }
@@ -59,24 +58,31 @@ erDiagram
 
 ### stocks
 
-ストックしたスライド情報を管理する。MVP では同期モデル（oembed-spec.md §5 / stock-api-spec.md §3）により、`POST /api/stocks` のリクエスト内で oEmbed 取得まで完了してから `status='ready'` で INSERT する。取得失敗時は INSERT せず（DB ロールバック相当）、`pending` / `failed` のレコードは作られない。
+ストックしたスライド情報を管理する。MVP では同期モデル + rollback semantics（oembed-spec.md §5 / stock-api-spec.md §3 / ADR-009 §4-2）により、`POST /api/stocks` のリクエスト内で oEmbed 取得まで完了してから INSERT する。取得失敗時は INSERT せず、`pending` / `failed` のレコードは存在しない。
 
 | カラム | 型 | 制約 | 説明 |
 |--------|------|------|------|
-| id | TEXT | PK | UUID |
+| id | TEXT | PK | UUID v7（時系列ソート可能、`uuidv7` パッケージ） |
 | user_id | TEXT | FK → users.id, NOT NULL | 所有ユーザー |
 | original_url | TEXT | NOT NULL | ユーザーが入力した元URL |
 | canonical_url | TEXT | NOT NULL | 正規化されたURL |
 | provider | TEXT | NOT NULL | `speakerdeck` / `docswell` / `google_slides` |
-| title | TEXT | nullable | スライドタイトル |
-| author_name | TEXT | nullable | 著者名 |
-| thumbnail_url | TEXT | nullable | サムネイルURL (外部参照) |
-| embed_url | TEXT | nullable | 埋め込み用URL |
-| status | TEXT | NOT NULL, DEFAULT 'ready' | MVP では常に `ready`。スキーマ上は `pending` / `ready` / `failed` を許容（将来非同期化用） |
+| title | TEXT | nullable | スライドタイトル（Google Slides の HTML 取得失敗時のみ null） |
+| author_name | TEXT | nullable | 著者名（Google Slides は仕様上常に null） |
+| thumbnail_url | TEXT | nullable | サムネイルURL（MVP では常に null） |
+| embed_url | TEXT | nullable | 埋め込み用URL（同期モデル + rollback semantics 下では原則 null にならない） |
 | created_at | TEXT | NOT NULL | 作成日時 (ISO 8601) |
 | updated_at | TEXT | NOT NULL | 更新日時 (ISO 8601) |
 
-> **設計判断（status カラムの扱い）:** スキーマには `pending` / `failed` を残すが、MVP では常に `ready` だけを書き込む。これは将来 Cloudflare Queues 等で非同期化する際にカラムを再利用できるようにするため（マイグレーションを増やさない）。クライアント側は `status === 'ready'` 以外を分岐する必要がない（ui-spec.md §5.3.3）。
+> **`status` カラムの履歴と方針:** 当初は `'pending' / 'ready' / 'failed'` を持つカラムだったが、ADR-004 で同期化した後 migration 0003 (`drop_status.sql`) で物理削除。ADR-009 §4-3 でも YAGNI 原則により再導入しないことを確定（rollback semantics 下では `status` の値が `'ready'` 以外になる経路がないため意味を持たない）。クライアントもメタデータの有無を `embed_url` / `title` で判定する（ui-spec.md §5.3.3）。
+
+#### マイグレーション履歴
+
+| Migration | 内容 |
+|-----------|------|
+| `0001_init.sql` | 初期スキーマ（users / stocks / memos）。stocks に `status TEXT NOT NULL DEFAULT 'pending'` を含む |
+| `0002_unique_stock_per_user.sql` | `(user_id, canonical_url)` の UNIQUE 制約を追加（`uniq_stocks_user_canonical_url`）。並列リクエストの最終防衛線 |
+| `0003_drop_status.sql` | ADR-004 後、`stocks.status` カラムを `ALTER TABLE ... DROP COLUMN status` で削除。ADR-009 でも維持 |
 
 ### memos
 
@@ -93,31 +99,20 @@ erDiagram
 
 ---
 
-## ステータス遷移図
+## stock のライフサイクル
 
-### MVP（同期モデル）
-
-```mermaid
-stateDiagram-v2
-    [*] --> ready : POST /api/stocks (同期 oEmbed 成功時に INSERT)
-    [*] --> Rejected : POST /api/stocks 失敗 (INSERT されない、ステータスを持つレコード自体が存在しない)
-```
-
-同期モデル（oembed-spec.md §5 / stock-api-spec.md §3）では、oEmbed 取得が成功するまで `stocks` への INSERT は実行されない。結果として MVP の運用上、stock のライフサイクルは `(存在しない) → ready` のみ。`pending` / `failed` 状態は作られない。
-
-### 将来の非同期モデル（参考、未実装）
-
-将来 Cloudflare Queues 等で非同期化する場合は次の遷移を再導入する余地がある:
+`status` カラムは廃止されているため明示的な遷移図はない。実装上のライフサイクルは「存在しない → 存在する（メタデータ充足）」のみ:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending : POST /stocks
-    pending --> ready : メタデータ取得成功
-    pending --> failed : メタデータ取得失敗
-    failed --> pending : 再取得リクエスト
+    [*] --> Exists : POST /api/stocks 成功（oEmbed 取得 + INSERT）
+    [*] --> Rejected : POST /api/stocks 失敗（INSERT されない）
+    Exists --> [*] : DELETE /api/stocks/:id
 ```
 
-スキーマ上 `status` カラムが `pending` / `failed` を許容しているのはこの将来拡張に備えるためで、MVP の実装からは利用されない。
+stock は INSERT 後、ユーザーが DELETE するまで残る。同期モデル + rollback semantics（ADR-009 §4-2）と Google Slides 軟性失敗の撤回（ADR-009 §4-5）により、INSERT が成功した stock は `title` / `embed_url` ともに充足が保証される（`author_name` のみ Google Slides では仕様上 `null`、`thumbnail_url` は MVP 全体で常に `null`）。
+
+将来 Cloudflare Queues 等で非同期化したくなった場合は、その時点で migration を 1 本足して `status` カラムを再導入する（YAGNI、ADR-009 §4-3）。
 
 ---
 
@@ -128,6 +123,7 @@ stateDiagram-v2
 | users | google_sub | UNIQUE | OIDC認証時の高速検索 |
 | stocks | user_id | INDEX | ユーザー別一覧取得 |
 | stocks | user_id, created_at | INDEX | ユーザー別一覧の日時ソート |
+| stocks | user_id, canonical_url | UNIQUE (`uniq_stocks_user_canonical_url`、migration 0002) | 同一ユーザー内での重複登録を DB レベルで防止。並列リクエスト時の最終防衛線（stock-api-spec.md §3.4 / §3.6） |
 | memos | stock_id | UNIQUE | stock毎に1メモの制約 |
 
 ---
