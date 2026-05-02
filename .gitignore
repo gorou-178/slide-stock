@@ -59,3 +59,5 @@ ops/
 # Temporary files
 *.tmp
 *.temp
+.gstack/
+.context/

@@ -2,6 +2,20 @@
 
 SpeakerDeck / Docswell / Google Slides の公開スライドをURL入力のみでストックできる個人向けWebサービス。Cloudflare 基盤。
 
+## gstack
+
+Web閲覧はすべて `/browse` スキルを使用する（`mcp__claude-in-chrome__*` ツールは使わない）。
+
+利用可能なスキル:
+- /plan-ceo-review — プロダクト方向性のレビュー
+- /plan-eng-review — アーキテクチャ設計レビュー
+- /review — コードレビュー（CI通過バグを発見）
+- /ship — テスト・push・PR作成を一括実行
+- /qa — ブラウザでの自動QAテスト
+- /careful — 破壊的コマンドの事前警告
+- /freeze — 変更範囲を1ディレクトリに制限
+
+
 ## Tech stack
 
 - **Frontend**: Astro (TypeScript) → Cloudflare Pages (static output)
