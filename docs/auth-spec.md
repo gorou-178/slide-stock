@@ -54,10 +54,14 @@ sequenceDiagram
 
 認証開始エンドポイント。Google の Authorization Endpoint にリダイレクトする。
 
+**クエリパラメータ:**
+- `return_to`（任意） — 認証完了後の戻り先パス。同一オリジン内の相対パス（`/` で始まり `//` で始まらない、改行文字を含まない）のみ採用する。それ以外は無視して `/` をデフォルト戻り先とする（オープンリダイレクト対策）。
+
 **処理:**
 1. CSRF対策用の `state` パラメータを生成（ランダム文字列 32バイト hex）
-2. `state` を平文 Cookie (`auth_state`) にセット（HttpOnly; SameSite=Lax; Max-Age: 300秒）
-3. Google Authorization Endpoint にリダイレクト
+2. `state` を平文 Cookie (`__Host-auth_state`) にセット（HttpOnly; Secure; SameSite=Lax; Max-Age: 300 秒）
+3. `return_to` が有効な値ならば `__Host-auth_return_to` Cookie に `encodeURIComponent` で URL エンコードして保存（同じ Cookie 属性）。無効ならば Cookie をセットしない
+4. Google Authorization Endpoint にリダイレクト
 
 > **設計判断:** `auth_state` Cookie は署名しない（平文）。理由:
 > - `state` はワンタイムのランダム値であり、予測困難（32バイト hex = 256ビットエントロピー）
@@ -93,14 +97,15 @@ Google からのコールバックを処理するエンドポイント。
 - `state` — CSRF 対策パラメータ
 
 **処理:**
-1. `state` を Cookie (`auth_state`) と照合。不一致なら 403 を返却
-2. `auth_state` Cookie を削除
-3. `code` を使って Google Token Endpoint に POST し、ID Token を取得
-4. ID Token を検証（→ セクション 4）
-5. `google_sub`, `email`, `name` を抽出
-6. `users` テーブルに upsert（`google_sub` で検索、存在すれば email/name 更新）
-7. セッション Cookie を発行（→ セクション 5）
-8. `302 Redirect` でトップページ（`/`）にリダイレクト（同一オリジンのため相対パス）
+1. `state` を Cookie (`__Host-auth_state`) と照合。不一致なら 403 を返却
+2. `__Host-auth_state` Cookie を削除
+3. `__Host-auth_return_to` Cookie を読み、`decodeURIComponent` 後にサーバー側で再検証（§3.1 と同じルール）。有効ならばリダイレクト先として採用、無効ならば `/` を採用。`__Host-auth_return_to` Cookie は採用したかどうかにかかわらず常に削除（Max-Age=0）
+4. `code` を使って Google Token Endpoint に POST し、ID Token を取得
+5. ID Token を検証（→ セクション 4）
+6. `google_sub`, `email`, `name` を抽出
+7. `users` テーブルに upsert（`google_sub` で検索、存在すれば email/name 更新）
+8. セッション Cookie を発行（→ セクション 5）
+9. `302 Redirect` で §3 の戻り先（デフォルト `/`、§3.1 で保存された return_to があればそちら）にリダイレクト
 
 **Google Token Endpoint:**
 ```

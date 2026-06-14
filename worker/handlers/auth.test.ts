@@ -192,6 +192,73 @@ describe("GET /api/auth/login", () => {
     ).searchParams.get("state");
     expect(state1).not.toBe(state2);
   });
+
+  // --- T-G: return_to サポート（spec auth-spec.md §3.1） ---
+
+  describe("return_to パラメータ", () => {
+    it("?return_to=/stocks/abc が指定されると __Host-auth_return_to Cookie がセットされる", async () => {
+      const response = await handleLogin(
+        createRequest("/api/auth/login?return_to=/stocks/abc"),
+        TEST_ENV,
+      );
+      const cookies = parseSetCookies(response);
+      expect(cookies.get("__Host-auth_return_to")).toBe(
+        encodeURIComponent("/stocks/abc"),
+      );
+    });
+
+    it("__Host-auth_return_to Cookie の属性が __Host-auth_state と同じ", async () => {
+      const response = await handleLogin(
+        createRequest("/api/auth/login?return_to=/stocks"),
+        TEST_ENV,
+      );
+      const attrs = getCookieAttributes(response, "__Host-auth_return_to");
+      expect(attrs["httponly"]).toBe("true");
+      expect(attrs["secure"]).toBe("true");
+      expect(attrs["samesite"]).toBe("Lax");
+      expect(attrs["max-age"]).toBe("300");
+      expect(attrs["path"]).toBe("/");
+    });
+
+    it("return_to が指定されない場合は __Host-auth_return_to Cookie をセットしない", async () => {
+      const response = await handleLogin(
+        createRequest("/api/auth/login"),
+        TEST_ENV,
+      );
+      const cookies = parseSetCookies(response);
+      expect(cookies.has("__Host-auth_return_to")).toBe(false);
+    });
+
+    it("return_to=//evil.com（プロトコル相対 URL）は採用しない（オープンリダイレクト対策）", async () => {
+      const response = await handleLogin(
+        createRequest("/api/auth/login?return_to=//evil.com/path"),
+        TEST_ENV,
+      );
+      const cookies = parseSetCookies(response);
+      expect(cookies.has("__Host-auth_return_to")).toBe(false);
+    });
+
+    it("return_to=https://evil.com（絶対 URL）は採用しない", async () => {
+      const response = await handleLogin(
+        createRequest(
+          "/api/auth/login?return_to=" +
+            encodeURIComponent("https://evil.com/path"),
+        ),
+        TEST_ENV,
+      );
+      const cookies = parseSetCookies(response);
+      expect(cookies.has("__Host-auth_return_to")).toBe(false);
+    });
+
+    it("return_to=stocks（先頭スラッシュなし）は採用しない", async () => {
+      const response = await handleLogin(
+        createRequest("/api/auth/login?return_to=stocks"),
+        TEST_ENV,
+      );
+      const cookies = parseSetCookies(response);
+      expect(cookies.has("__Host-auth_return_to")).toBe(false);
+    });
+  });
 });
 
 // ============================================================
@@ -422,6 +489,82 @@ describe("GET /api/auth/callback", () => {
       const attrs = getCookieAttributes(response, "__Host-auth_state");
       expect(attrs["max-age"]).toBe("0");
       expect(attrs["path"]).toBe("/");
+    });
+
+    it("__Host-auth_return_to Cookie が削除される（採用したかどうかにかかわらず、Max-Age=0）", async () => {
+      const response = await executeSuccessfulCallback();
+      const attrs = getCookieAttributes(response, "__Host-auth_return_to");
+      expect(attrs["max-age"]).toBe("0");
+      expect(attrs["path"]).toBe("/");
+    });
+
+    // --- T-G: return_to サポート（spec auth-spec.md §3.2） ---
+
+    describe("return_to Cookie 経由のリダイレクト", () => {
+      async function executeWithReturnTo(rawReturnTo: string): Promise<Response> {
+        const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
+        fetchSpy.mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              id_token: "mock.id.token",
+              access_token: "mock-access-token",
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+        );
+
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+        const request = createRequest(
+          `/api/auth/callback?code=auth-code-123&state=${VALID_STATE}`,
+          {
+            cookie:
+              `__Host-auth_state=${VALID_STATE}; ` +
+              `__Host-auth_return_to=${rawReturnTo}`,
+          },
+        );
+
+        const deps: AuthDeps = {
+          verifyIdToken: async () => ({
+            sub: MOCK_ID_TOKEN_CLAIMS.sub,
+            email: MOCK_ID_TOKEN_CLAIMS.email,
+            name: MOCK_ID_TOKEN_CLAIMS.name,
+          }),
+        };
+
+        try {
+          return await handleCallback(request, TEST_ENV, deps);
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      }
+
+      it("有効な return_to が Cookie にあるとそこにリダイレクトする", async () => {
+        const response = await executeWithReturnTo(
+          encodeURIComponent("/stocks/abc-123"),
+        );
+        expect(response.headers.get("Location")).toBe("/stocks/abc-123");
+      });
+
+      it("return_to=//evil.com（プロトコル相対）は無視して / にリダイレクト", async () => {
+        const response = await executeWithReturnTo(
+          encodeURIComponent("//evil.com/path"),
+        );
+        expect(response.headers.get("Location")).toBe("/");
+      });
+
+      it("return_to=https://evil.com（絶対 URL）は無視して / にリダイレクト", async () => {
+        const response = await executeWithReturnTo(
+          encodeURIComponent("https://evil.com/x"),
+        );
+        expect(response.headers.get("Location")).toBe("/");
+      });
+
+      it("return_to が空文字だと / にリダイレクト", async () => {
+        const response = await executeWithReturnTo("");
+        expect(response.headers.get("Location")).toBe("/");
+      });
     });
 
     // --- SESSION_MAX_AGE ---

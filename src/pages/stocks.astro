@@ -16,6 +16,7 @@ import StockList from '../components/StockList.astro';
     fetchStocks,
     createStock,
     formatCreateStockError,
+    redirectToLogin,
     ApiError,
     type StockItem,
   } from '../lib/api-client';
@@ -109,7 +110,7 @@ import StockList from '../components/StockList.astro';
   async function init() {
     const user = await fetchMe().catch(() => null);
     if (!user) {
-      window.location.href = '/login';
+      redirectToLogin();
       return;
     }
 
@@ -139,7 +140,7 @@ import StockList from '../components/StockList.astro';
       if (err && typeof err === 'object' && 'status' in err) {
         const apiErr = err as { status: number };
         if (apiErr.status === 401) {
-          window.location.href = '/login';
+          redirectToLogin();
           return;
         }
         if (apiErr.status >= 500) {
@@ -188,7 +189,7 @@ import StockList from '../components/StockList.astro';
       if (err instanceof ApiError) {
         // 401 はログインリダイレクト（ui-spec.md §7.4）
         if (err.status === 401) {
-          window.location.href = '/login';
+          redirectToLogin();
           return;
         }
         urlError.textContent = formatCreateStockError(err);

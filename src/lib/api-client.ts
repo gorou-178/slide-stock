@@ -2,6 +2,20 @@
 
 const CREATE_STOCK_CLIENT_TIMEOUT_MS = 15_000; // ui-spec.md §7.3
 
+/**
+ * 401 等で /login に飛ばすときに現在位置を return_to として保持する。
+ * オープンリダイレクトを防ぐためサーバー側で再検証されるが、クライアントでも
+ * /login への無限ループを避けるため /login 自身は除外する（spec §5.2 / §6.2）。
+ */
+export function redirectToLogin(): void {
+  const current = window.location.pathname + window.location.search;
+  const skipReturnTo = current === '/' || current.startsWith('/login');
+  const target = skipReturnTo
+    ? '/login'
+    : `/login?return_to=${encodeURIComponent(current)}`;
+  window.location.href = target;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,

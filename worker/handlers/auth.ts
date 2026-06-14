@@ -89,14 +89,34 @@ export async function verifyGoogleIdToken(
 // --- ハンドラ ---
 
 /**
+ * return_to が「同一オリジン内の相対パス」かを検証する。
+ * オープンリダイレクト対策として `/` で始まり `//` で始まらないものだけ許容する。
+ */
+export function isSafeReturnTo(value: string | null | undefined): value is string {
+  if (typeof value !== "string" || value.length === 0) return false;
+  if (!value.startsWith("/")) return false;
+  if (value.startsWith("//")) return false;
+  // Cookie ヘッダ注入対策。実用上 \r\n が含まれる正当なパスは存在しない
+  if (/[\r\n]/.test(value)) return false;
+  return true;
+}
+
+/**
  * GET /api/auth/login
  * auth-spec.md セクション 3.1
+ *
+ * ?return_to=<相対パス> を受け取り、検証後に __Host-auth_return_to Cookie に
+ * 保存する。callback でこの Cookie を読み、認証完了後のリダイレクト先として使う。
  */
 export async function handleLogin(
-  _request: Request,
+  request: Request,
   env: AuthEnv,
 ): Promise<Response> {
   const state = generateState();
+
+  const url = new URL(request.url);
+  const rawReturnTo = url.searchParams.get("return_to");
+  const returnTo = isSafeReturnTo(rawReturnTo) ? rawReturnTo : null;
 
   const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authUrl.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
@@ -112,6 +132,12 @@ export async function handleLogin(
     "Set-Cookie",
     `__Host-auth_state=${state}; HttpOnly; Secure; SameSite=Lax; Max-Age=300; Path=/`,
   );
+  if (returnTo) {
+    headers.append(
+      "Set-Cookie",
+      `__Host-auth_return_to=${encodeURIComponent(returnTo)}; HttpOnly; Secure; SameSite=Lax; Max-Age=300; Path=/`,
+    );
+  }
 
   return new Response(null, { status: 302, headers });
 }
@@ -133,6 +159,20 @@ export async function handleCallback(
   const authState = cookies.get("__Host-auth_state");
   if (!authState || authState !== state) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // return_to Cookie（任意）。検証して safe な値だけ最終リダイレクト先に採用する
+  let redirectTo = "/";
+  const rawReturnTo = cookies.get("__Host-auth_return_to");
+  if (rawReturnTo) {
+    try {
+      const decoded = decodeURIComponent(rawReturnTo);
+      if (isSafeReturnTo(decoded)) {
+        redirectTo = decoded;
+      }
+    } catch {
+      // decodeURIComponent 失敗時はデフォルトの "/" にフォールバック
+    }
   }
 
   if (!code) {
@@ -198,7 +238,7 @@ export async function handleCallback(
   const sessionValue = await createSessionCookie(userId, env.SESSION_SECRET, maxAge);
 
   const headers = new Headers();
-  headers.set("Location", "/");
+  headers.set("Location", redirectTo);
   headers.append(
     "Set-Cookie",
     `__Host-session=${sessionValue}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`,
@@ -206,6 +246,11 @@ export async function handleCallback(
   headers.append(
     "Set-Cookie",
     "__Host-auth_state=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
+  );
+  // return_to Cookie は常に削除（採用したかどうかにかかわらず）
+  headers.append(
+    "Set-Cookie",
+    "__Host-auth_return_to=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
   );
 
   return new Response(null, { status: 302, headers });
