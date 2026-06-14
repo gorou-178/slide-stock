@@ -4,10 +4,11 @@
  * URL 登録 → oEmbed 同期取得 → メタデータ込み stock が取得できることを検証する。
  *
  * テスト戦略:
- * - handleCreateStock で stock を登録（oEmbed 同期取得で ready 状態）
+ * - handleCreateStock で stock を登録（oEmbed 同期取得で完成済み）
  * - handleGetStock / handleListStocks で完全なメタデータが返ることを確認
  * - 各プロバイダ（SpeakerDeck, Docswell, Google Slides）で検証
- * - 失敗シナリオ: oEmbed 取得失敗 → stock は作成されるがメタデータ null
+ * - 失敗シナリオ: oEmbed 取得失敗 → stock は作成されない、UPSTREAM_* エラーが返る
+ *   （ADR-009 §4-2 / spec §3.5）
  *
  * ハンドラー直接呼出方式: ルーティング層に依存しない。
  */
@@ -29,6 +30,8 @@ import {
 import type { AuthContext } from "../middleware/test-auth-bypass";
 
 // --- oEmbed フェッチのモック ---
+// fetchWithRetry はリトライ／バックオフを bypass する形でラップする。
+// retry ロジック自体は worker/lib/oembed.test.ts で担保済み。
 vi.mock("../lib/oembed", async (importOriginal) => {
   const original = await importOriginal<typeof import("../lib/oembed")>();
   return {
@@ -36,6 +39,15 @@ vi.mock("../lib/oembed", async (importOriginal) => {
     fetchSpeakerDeckMetadata: vi.fn(),
     fetchDocswellMetadata: vi.fn(),
     fetchGoogleSlidesMetadata: vi.fn(),
+    fetchWithRetry: vi
+      .fn()
+      .mockImplementation(
+        async (
+          fetcher: (signal: AbortSignal) => Promise<unknown>,
+        ): Promise<unknown> => {
+          return await fetcher(AbortSignal.timeout(5_000));
+        },
+      ),
   };
 });
 
@@ -43,6 +55,7 @@ import {
   fetchSpeakerDeckMetadata,
   fetchDocswellMetadata,
   fetchGoogleSlidesMetadata,
+  UpstreamFailureError,
 } from "../lib/oembed";
 
 const mockSpeakerDeck = vi.mocked(fetchSpeakerDeckMetadata);
@@ -200,26 +213,26 @@ describe("統合テスト: URL 登録 → メタデータ取得 → 一覧表示
   // --- 失敗シナリオ ---
 
   describe("失敗シナリオ: oEmbed 取得失敗", () => {
-    it("oEmbed 取得失敗 → stock は作成されるがメタデータ null", async () => {
-      mockSpeakerDeck.mockRejectedValueOnce(new Error("Network timeout"));
-
-      const created = await createStock(
-        "https://speakerdeck.com/integration/deleted-slide",
+    it("oEmbed 取得失敗 → stock は作成されない、502 UPSTREAM_FAILURE が返る", async () => {
+      mockSpeakerDeck.mockRejectedValueOnce(
+        new UpstreamFailureError("max retries exhausted"),
       );
 
-      expect((created as Record<string, unknown>).status).toBeUndefined();
-      expect(created.title).toBeNull();
-      expect(created.embed_url).toBeNull();
+      const url = "https://speakerdeck.com/integration/deleted-slide";
+      const request = createJsonRequest("/api/stocks", "POST", { url });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
 
-      // GET でも同じ状態
-      const detailRes = await handleGetStock(
-        created.id,
-        stockEnv(),
-        auth(USER1),
-      );
-      const detail = await parseJsonResponse<StockResponse>(detailRes);
-      expect(detail.title).toBeNull();
-      expect(detail.embed_url).toBeNull();
+      expect(res.status).toBe(502);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("UPSTREAM_FAILURE");
+
+      // DB に該当 canonical_url の stock は残らない
+      const remaining = await env.DB.prepare(
+        "SELECT id FROM stocks WHERE user_id = ? AND canonical_url = ? LIMIT 1",
+      )
+        .bind(USER1, url)
+        .first<{ id: string }>();
+      expect(remaining).toBeNull();
     });
   });
 

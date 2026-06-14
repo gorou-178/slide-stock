@@ -33,6 +33,9 @@ import { handleGetMemo } from "./memo";
 import type { AuthContext } from "../middleware/test-auth-bypass";
 
 // --- oEmbed モック ---
+// fetchWithRetry はリトライ／バックオフを bypass して fetcher を 1 回だけ呼ぶ
+// 形にする。retry ロジックの単体テストは worker/lib/oembed.test.ts 側で担保し、
+// ハンドラ単体テストではマッピングだけを検証する。
 vi.mock("../lib/oembed", async (importOriginal) => {
   const original = await importOriginal<typeof import("../lib/oembed")>();
   return {
@@ -55,6 +58,15 @@ vi.mock("../lib/oembed", async (importOriginal) => {
       thumbnailUrl: null,
       embedUrl: "https://docs.google.com/presentation/d/mock123/embed",
     }),
+    fetchWithRetry: vi
+      .fn()
+      .mockImplementation(
+        async (
+          fetcher: (signal: AbortSignal) => Promise<unknown>,
+        ): Promise<unknown> => {
+          return await fetcher(AbortSignal.timeout(5_000));
+        },
+      ),
   };
 });
 
@@ -62,6 +74,11 @@ import {
   fetchSpeakerDeckMetadata,
   fetchDocswellMetadata,
   fetchGoogleSlidesMetadata,
+  UpstreamNotFoundError,
+  UpstreamForbiddenError,
+  UpstreamInvalidResponseError,
+  UpstreamFailureError,
+  UpstreamTimeoutError,
 } from "../lib/oembed";
 
 // --- テスト用ヘルパー ---
@@ -178,22 +195,6 @@ describe("POST /api/stocks", () => {
       expect(uuidV7Pattern.test(body.id as string)).toBe(true);
     });
 
-    it("P5: oEmbed 取得失敗でも stock は作成される（メタデータ null）", async () => {
-      vi.mocked(fetchSpeakerDeckMetadata).mockRejectedValueOnce(
-        new Error("Network timeout"),
-      );
-
-      const request = createJsonRequest("/api/stocks", "POST", {
-        url: "https://speakerdeck.com/newuser/fail-slide",
-      });
-      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
-
-      expect(res.status).toBe(201);
-      const body = await parseJsonResponse<Record<string, unknown>>(res);
-      expect(body.status).toBeUndefined();
-      expect(body.title).toBeNull();
-      expect(body.embed_url).toBeNull();
-    });
   });
 
   // --- 異常系 ---
@@ -286,6 +287,233 @@ describe("POST /api/stocks", () => {
       expect(res.status).toBe(400);
       const body = await parseJsonResponse<{ code: string }>(res);
       expect(body.code).toBe("INVALID_REQUEST");
+    });
+  });
+
+  // --- プロバイダエラー: UPSTREAM_* マッピング（spec §3.5 / §8.1 P14-P26 / ADR-009 §4-2） ---
+
+  describe("プロバイダエラー（UPSTREAM_*）", () => {
+    async function findStock(userId: string, canonicalUrl: string) {
+      return await env.DB.prepare(
+        "SELECT id FROM stocks WHERE user_id = ? AND canonical_url = ? LIMIT 1",
+      )
+        .bind(userId, canonicalUrl)
+        .first<{ id: string }>();
+    }
+
+    it("P14: SpeakerDeck 404 → 400 UPSTREAM_NOT_FOUND、stock は作成されない", async () => {
+      vi.mocked(fetchSpeakerDeckMetadata).mockRejectedValueOnce(
+        new UpstreamNotFoundError("SpeakerDeck 404"),
+      );
+      const canonicalUrl = "https://speakerdeck.com/newuser/missing-slide";
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: canonicalUrl,
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(400);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("UPSTREAM_NOT_FOUND");
+      expect(await findStock(USER1, canonicalUrl)).toBeNull();
+    });
+
+    it("P15: Docswell 403 → 400 UPSTREAM_FORBIDDEN、stock は作成されない", async () => {
+      vi.mocked(fetchDocswellMetadata).mockRejectedValueOnce(
+        new UpstreamForbiddenError("Docswell 403"),
+      );
+      const canonicalUrl = "https://www.docswell.com/s/newuser/PRIV01-private";
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: canonicalUrl,
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(400);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("UPSTREAM_FORBIDDEN");
+      expect(await findStock(USER1, canonicalUrl)).toBeNull();
+    });
+
+    it("P16: SpeakerDeck リトライ上限到達 → 502 UPSTREAM_FAILURE、stock は作成されない", async () => {
+      vi.mocked(fetchSpeakerDeckMetadata).mockRejectedValueOnce(
+        new UpstreamFailureError("max retries exhausted"),
+      );
+      const canonicalUrl = "https://speakerdeck.com/newuser/upstream-fail";
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: canonicalUrl,
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(502);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("UPSTREAM_FAILURE");
+      expect(await findStock(USER1, canonicalUrl)).toBeNull();
+    });
+
+    it("P17: Docswell 合計予算切れ → 504 UPSTREAM_TIMEOUT、stock は作成されない", async () => {
+      vi.mocked(fetchDocswellMetadata).mockRejectedValueOnce(
+        new UpstreamTimeoutError("total budget exhausted"),
+      );
+      const canonicalUrl = "https://www.docswell.com/s/newuser/SLOW01-timeout";
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: canonicalUrl,
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(504);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("UPSTREAM_TIMEOUT");
+      expect(await findStock(USER1, canonicalUrl)).toBeNull();
+    });
+
+    it("P18: SpeakerDeck レスポンス形式不正 → 502 UPSTREAM_INVALID_RESPONSE、stock は作成されない", async () => {
+      vi.mocked(fetchSpeakerDeckMetadata).mockRejectedValueOnce(
+        new UpstreamInvalidResponseError("missing iframe src"),
+      );
+      const canonicalUrl = "https://speakerdeck.com/newuser/malformed-slide";
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: canonicalUrl,
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(502);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("UPSTREAM_INVALID_RESPONSE");
+      expect(await findStock(USER1, canonicalUrl)).toBeNull();
+    });
+
+    it("P22: Google Slides <title> 欠落 → 502 UPSTREAM_INVALID_RESPONSE、stock は作成されない", async () => {
+      vi.mocked(fetchGoogleSlidesMetadata).mockRejectedValueOnce(
+        new UpstreamInvalidResponseError("missing <title>"),
+      );
+      const canonicalUrl =
+        "https://docs.google.com/presentation/d/1notitle00000000000000000";
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: `${canonicalUrl}/edit`,
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(502);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("UPSTREAM_INVALID_RESPONSE");
+      expect(await findStock(USER1, canonicalUrl)).toBeNull();
+    });
+
+    it("P23: Google Slides 5xx 連続失敗 → 502 UPSTREAM_FAILURE、stock は作成されない", async () => {
+      vi.mocked(fetchGoogleSlidesMetadata).mockRejectedValueOnce(
+        new UpstreamFailureError("Google Slides 503 x3"),
+      );
+      const canonicalUrl =
+        "https://docs.google.com/presentation/d/1gs5xxfail0000000000000000";
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: `${canonicalUrl}/edit`,
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(502);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("UPSTREAM_FAILURE");
+      expect(await findStock(USER1, canonicalUrl)).toBeNull();
+    });
+
+    it("P24: Google Slides タイムアウト → 504 UPSTREAM_TIMEOUT、stock は作成されない", async () => {
+      vi.mocked(fetchGoogleSlidesMetadata).mockRejectedValueOnce(
+        new UpstreamTimeoutError("Google Slides total budget exhausted"),
+      );
+      const canonicalUrl =
+        "https://docs.google.com/presentation/d/1gstimeout00000000000000000";
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: `${canonicalUrl}/edit`,
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(504);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("UPSTREAM_TIMEOUT");
+      expect(await findStock(USER1, canonicalUrl)).toBeNull();
+    });
+
+    it("P25: Google Slides 401/403 → 400 UPSTREAM_FORBIDDEN、stock は作成されない", async () => {
+      vi.mocked(fetchGoogleSlidesMetadata).mockRejectedValueOnce(
+        new UpstreamForbiddenError("Google Slides 403 private"),
+      );
+      const canonicalUrl =
+        "https://docs.google.com/presentation/d/1gsprivate00000000000000000";
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: `${canonicalUrl}/edit`,
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(400);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("UPSTREAM_FORBIDDEN");
+      expect(await findStock(USER1, canonicalUrl)).toBeNull();
+    });
+
+    it("P26: Google Slides 404 → 400 UPSTREAM_NOT_FOUND、stock は作成されない", async () => {
+      vi.mocked(fetchGoogleSlidesMetadata).mockRejectedValueOnce(
+        new UpstreamNotFoundError("Google Slides 404"),
+      );
+      const canonicalUrl =
+        "https://docs.google.com/presentation/d/1gsmissing00000000000000000";
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: `${canonicalUrl}/edit`,
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(400);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("UPSTREAM_NOT_FOUND");
+      expect(await findStock(USER1, canonicalUrl)).toBeNull();
+    });
+  });
+
+  // --- D1 INSERT 失敗（spec §3.6 / §8.1 P20 / P21 / ADR-009 §4-4） ---
+
+  describe("D1 INSERT 失敗", () => {
+    function fakeEnv(insertError: Error): StockEnv {
+      return {
+        DB: {
+          prepare: (sql: string) => ({
+            bind: (..._args: unknown[]) => ({
+              first: async () => null, // SELECT (重複チェック) は通す
+              run: async () => {
+                if (sql.includes("INSERT")) {
+                  throw insertError;
+                }
+                return { success: true } as unknown;
+              },
+            }),
+          }),
+        },
+      } as unknown as StockEnv;
+    }
+
+    it("P20: 並列レースの UNIQUE 制約違反 → 409 DUPLICATE_STOCK", async () => {
+      const env = fakeEnv(
+        new Error(
+          "D1_ERROR: UNIQUE constraint failed: stocks.user_id, stocks.canonical_url",
+        ),
+      );
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://speakerdeck.com/newuser/race-condition",
+      });
+      const res = await handleCreateStock(request, env, auth(USER1));
+
+      expect(res.status).toBe(409);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("DUPLICATE_STOCK");
+    });
+
+    it("P21: D1 INSERT 一般エラー → 500 INTERNAL_ERROR", async () => {
+      const env = fakeEnv(new Error("D1_ERROR: connection lost"));
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://speakerdeck.com/newuser/d1-down",
+      });
+      const res = await handleCreateStock(request, env, auth(USER1));
+
+      expect(res.status).toBe(500);
+      const body = await parseJsonResponse<{ code: string }>(res);
+      expect(body.code).toBe("INTERNAL_ERROR");
     });
   });
 

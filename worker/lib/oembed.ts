@@ -17,11 +17,40 @@ export interface StockMetadata {
   embedUrl: string | null;
 }
 
-/** リトライ不要な恒久的エラー（404 / 403 / レスポンス形式不正） */
+/**
+ * リトライ不要な恒久的エラーの基底クラス。
+ * 具体的なケース（404 / 401・403 / レスポンス形式不正）は下のサブクラスで区別する。
+ * handler は instanceof でサブクラスを判別し UPSTREAM_NOT_FOUND / UPSTREAM_FORBIDDEN /
+ * UPSTREAM_INVALID_RESPONSE にマッピングする（stock-api-spec.md §2.3）。
+ */
 export class PermanentError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PermanentError";
+  }
+}
+
+/** プロバイダ側にスライドが存在しない（HTTP 404 → 400 UPSTREAM_NOT_FOUND） */
+export class UpstreamNotFoundError extends PermanentError {
+  constructor(message: string) {
+    super(message);
+    this.name = "UpstreamNotFoundError";
+  }
+}
+
+/** プロバイダ側からアクセス拒否（HTTP 401 / 403 → 400 UPSTREAM_FORBIDDEN） */
+export class UpstreamForbiddenError extends PermanentError {
+  constructor(message: string) {
+    super(message);
+    this.name = "UpstreamForbiddenError";
+  }
+}
+
+/** レスポンス形式が想定外（200 だが必須フィールド欠落 等 → 502 UPSTREAM_INVALID_RESPONSE） */
+export class UpstreamInvalidResponseError extends PermanentError {
+  constructor(message: string) {
+    super(message);
+    this.name = "UpstreamInvalidResponseError";
   }
 }
 
@@ -58,7 +87,7 @@ async function fetchWithSizeLimit(
 
   const contentLength = res.headers.get("Content-Length");
   if (contentLength && parseInt(contentLength) > maxSize) {
-    throw new PermanentError(
+    throw new UpstreamInvalidResponseError(
       `Response too large: ${contentLength} bytes (max ${maxSize})`,
     );
   }
@@ -80,12 +109,12 @@ export async function fetchSpeakerDeckMetadata(
   const res = await fetchWithSizeLimit(oembedUrl, MAX_OEMBED_RESPONSE_SIZE, signal);
 
   if (res.status === 404) {
-    throw new PermanentError(
+    throw new UpstreamNotFoundError(
       `SpeakerDeck oEmbed returned 404: slide not found or private`,
     );
   }
   if (res.status === 403) {
-    throw new PermanentError(
+    throw new UpstreamForbiddenError(
       `SpeakerDeck oEmbed returned 403: access denied`,
     );
   }
@@ -108,7 +137,9 @@ export async function fetchSpeakerDeckMetadata(
   }
 
   if (!embedUrl) {
-    throw new PermanentError("Failed to extract embed URL from oEmbed html");
+    throw new UpstreamInvalidResponseError(
+      "Failed to extract embed URL from oEmbed html",
+    );
   }
 
   return {
@@ -133,12 +164,12 @@ export async function fetchDocswellMetadata(
   const res = await fetchWithSizeLimit(oembedUrl, MAX_OEMBED_RESPONSE_SIZE, signal);
 
   if (res.status === 404) {
-    throw new PermanentError(
+    throw new UpstreamNotFoundError(
       `Docswell oEmbed returned 404: slide not found or private`,
     );
   }
   if (res.status === 403) {
-    throw new PermanentError(
+    throw new UpstreamForbiddenError(
       `Docswell oEmbed returned 403: access denied`,
     );
   }
@@ -154,7 +185,9 @@ export async function fetchDocswellMetadata(
 
   const rawEmbedUrl = data.url ?? null;
   if (!rawEmbedUrl) {
-    throw new PermanentError("Docswell oEmbed response missing url field");
+    throw new UpstreamInvalidResponseError(
+      "Docswell oEmbed response missing url field",
+    );
   }
 
   let embedUrl: string | null = rawEmbedUrl;
@@ -171,7 +204,7 @@ export async function fetchDocswellMetadata(
   }
 
   if (!embedUrl) {
-    throw new PermanentError(
+    throw new UpstreamInvalidResponseError(
       `Docswell oEmbed returned untrusted embed URL: ${rawEmbedUrl}`,
     );
   }
@@ -206,12 +239,12 @@ export async function fetchGoogleSlidesMetadata(
   });
 
   if (res.status === 401 || res.status === 403) {
-    throw new PermanentError(
+    throw new UpstreamForbiddenError(
       `Google Slides returned ${res.status}: slide private or access denied`,
     );
   }
   if (res.status === 404) {
-    throw new PermanentError(
+    throw new UpstreamNotFoundError(
       "Google Slides returned 404: presentation not found",
     );
   }
@@ -222,7 +255,9 @@ export async function fetchGoogleSlidesMetadata(
   const html = await res.text();
   const match = html.match(/<title>(.+?)<\/title>/);
   if (!match) {
-    throw new PermanentError("Google Slides response missing <title> tag");
+    throw new UpstreamInvalidResponseError(
+      "Google Slides response missing <title> tag",
+    );
   }
 
   const title = match[1]
@@ -230,7 +265,9 @@ export async function fetchGoogleSlidesMetadata(
     .trim();
 
   if (!title) {
-    throw new PermanentError("Google Slides title is empty after suffix strip");
+    throw new UpstreamInvalidResponseError(
+      "Google Slides title is empty after suffix strip",
+    );
   }
 
   return {
