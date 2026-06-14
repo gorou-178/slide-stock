@@ -5,7 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to a 4-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
-## [0.0.4.0] - 2026-05-02
+## [0.0.4.1] - 2026-06-14
+
+### Added
+- `worker/lib/oembed.ts` に同期内リトライ機構 `fetchWithRetry(fetcher, totalBudgetMs?)` を追加（ADR-009 §4-2 / oembed-spec.md §6）。指数バックオフ 3 回（0ms → 500ms → 1500ms）、1 試行 3 秒タイムアウト、合計予算 12 秒。`PermanentError` は即 throw（リトライしない）、それ以外の `Error` は一時的エラーとしてリトライ。全試行失敗で `UpstreamFailureError`、合計予算超過で `UpstreamTimeoutError` を throw。両エラークラスも新規エクスポート。後段の handler（PR-C）が `instanceof` で 502 / 504 にマッピングする想定。
+- `worker/lib/oembed.test.ts` に `fetchWithRetry` の挙動を網羅するテストを追加（R1〜R7）: 1 回目成功で 1 回しか呼ばれない / 1 回目失敗→2 回目成功 / 3 連続失敗→`UpstreamFailureError`（cause に最後の Error）/ `PermanentError` は即 throw / abort 系 Error はリトライ対象 / 合計予算切れ→`UpstreamTimeoutError` / 各 attempt に `AbortSignal` が渡されること。Google Slides の hard failure 化を網羅する G1〜G6 ケースも追加（サフィックス除去後 title 空 → `PermanentError` / `<title>` タグなし → `PermanentError` / 404 / 403 / 401 → `PermanentError` / 500 → 一時的 Error / `Accept-Language: ja` ヘッダが付与される）。`fetch` に `signal` が渡されるアサートも追加。
+
+### Changed
+- `worker/lib/oembed.ts` の 3 つの fetcher（`fetchSpeakerDeckMetadata` / `fetchDocswellMetadata` / `fetchGoogleSlidesMetadata`）のシグネチャに `signal: AbortSignal` を追加し、内部の `fetch` に直接渡す形に統一。従来の内部 `AbortController` + 10 秒タイマー方式の `fetchWithTimeout` ヘルパーを `fetchWithSizeLimit(url, maxSize, signal, init?)` に置き換え、タイムアウトは呼び出し側の signal に一本化（oembed-spec.md §5.2 / §8）。
+- `fetchGoogleSlidesMetadata` を ADR-009 §4-5 の hard failure 方針に揃えた。従来の try/catch で「タイトル取得失敗時も `title=null` で続行」とする軟性失敗ロジックを完全に削除し、spec §4.3 の `fetchGoogleSlidesTitle` 仕様に置換（401/403/404/`<title>` 欠落/抽出後空文字 → `PermanentError`、5xx・ネットワーク失敗 → 一般 `Error` でリトライ対象）。`Accept-Language: ja` と `redirect: "follow"` を付与。`console.warn` ログ（`google_slides_title_fetch_failed`）は廃止し、上位 handler の `console.error(oembed_fetch_failed)` に統一。
+- `worker/handlers/stock-create.ts` の `fetchMetadataByProvider` シグネチャに `signal: AbortSignal` を追加し、呼び出し側で `AbortSignal.timeout(12_000)` を渡すよう最小修正。fetch-first 化（INSERT 順序の入れ替え）と `UPSTREAM_*` HTTP レスポンスへのマッピングは後続 PR-C のスコープ。本 PR では handler の挙動は変えず、メタデータ取得失敗時は従来どおり catch して null メタデータで stock を残す（既存テスト P5 が引き続き緑）。
+- `worker/handlers/stocks.test.ts` の P1（SpeakerDeck 登録）で `fetchSpeakerDeckMetadata` の呼び出し検証を `toHaveBeenCalledWith(url, expect.any(AbortSignal))` に更新。新シグネチャに追従。
+- `worker/security-verification.test.ts` の T-601（embed URL ドメインバリデーション）テストで `realFetchDocswellMetadata` 呼び出しに `AbortSignal.timeout(5_000)` を追加。新シグネチャに追従。
+
+### Other
+- `tasks/T-A3-oembed-retry.md` を追加。本 PR の作業内容と PR-C 以降との分担を整理した実装プラン。
 
 ### Added
 - `docs/adr/009-spec-ssot-and-sync-rollback.md` を新規作成。プロジェクトのプロセス原則として「`docs/*-spec.md` を SSOT、ADR は断面スナップショット、spec と実装が矛盾したら実装を spec に合わせる」を確定。あわせて同期 oEmbed 取得のセマンティクスを「fetch-first + insert-on-success / 失敗時は INSERT しない（DB ロールバック相当） / `UPSTREAM_*` 5 種を 400/502/504 で返却 / 指数バックオフ 3 回 / 各 3 秒 / 合計 12 秒予算」に統一。`status` カラムは現時点で意味のない情報であるため YAGNI 原則で **廃止のまま維持**（migration 0004 は作らない、§4-3）。spec で扱いが未定義だった「並列リクエストでの UNIQUE 制約競合」「D1 INSERT 自体の失敗」の挙動も §4-4 で明文化（前者 → 409 `DUPLICATE_STOCK`、後者 → 500 `INTERNAL_ERROR`、いずれも半端なデータは残らない）。後続 PR-B〜PR-D の実装計画もここに整理。

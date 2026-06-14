@@ -123,43 +123,45 @@ describe("T-602: Docswell embed_url ドメインバリデーション", () => {
     ) as unknown as typeof fetch;
   }
 
+  const sig = () => AbortSignal.timeout(5_000);
+
   it("正規の docswell.com ドメイン URL は受け入れる", async () => {
     mockDocswellResponse("https://www.docswell.com/slide/59VDWM/embed");
-    const result = await realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM");
+    const result = await realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM", sig());
     expect(result.embedUrl).toBe("https://www.docswell.com/slide/59VDWM/embed");
   });
 
   it("サブドメインなしの docswell.com URL も受け入れる", async () => {
     mockDocswellResponse("https://docswell.com/slide/59VDWM/embed");
-    const result = await realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM");
+    const result = await realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM", sig());
     expect(result.embedUrl).toBe("https://docswell.com/slide/59VDWM/embed");
   });
 
   it("HTTP プロトコルの URL は PermanentError", async () => {
     mockDocswellResponse("http://www.docswell.com/slide/59VDWM/embed");
     await expect(
-      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM", sig()),
     ).rejects.toThrow(PermanentError);
   });
 
   it("docswell.com 以外のドメインは PermanentError", async () => {
     mockDocswellResponse("https://evil.example.com/slide/embed");
     await expect(
-      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM", sig()),
     ).rejects.toThrow(PermanentError);
   });
 
   it("不正な URL 形式は PermanentError", async () => {
     mockDocswellResponse("not-a-valid-url");
     await expect(
-      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM", sig()),
     ).rejects.toThrow(PermanentError);
   });
 
   it("docswell.com のサブドメインを装った偽ドメインは PermanentError", async () => {
     mockDocswellResponse("https://docswell.com.evil.example.com/slide/embed");
     await expect(
-      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM"),
+      realFetchDocswellMetadata("https://www.docswell.com/s/user/59VDWM", sig()),
     ).rejects.toThrow(PermanentError);
   });
 });
