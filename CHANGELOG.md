@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to a 4-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.0.5.1] - 2026-06-14
+
+### Added
+- ADR-009 PR-D 完了: `src/lib/api-client.ts` に `formatCreateStockError(err: ApiError): string` を新規追加。`POST /api/stocks` のエラー code を `ui-spec.md` §7.4 のユーザー表示メッセージ表にマッピングする SSOT 関数。`UPSTREAM_NOT_FOUND` / `UPSTREAM_FORBIDDEN` を「スライドが見つかりません。URL が正しいか、スライドが公開されているか確認してください。」、`UPSTREAM_FAILURE` / `UPSTREAM_INVALID_RESPONSE` / `UPSTREAM_TIMEOUT` を「プロバイダから応答がありません。時間をおいて再度お試しください。」、`INTERNAL_ERROR` を「エラーが発生しました。しばらくしてからやり直してください。」、`CLIENT_TIMEOUT` を「タイムアウトしました。もう一度お試しください。」、`NETWORK_ERROR` を「サーバーに接続できません。ネットワーク接続を確認してください。」、URL バリデーション系（`INVALID_URL` / `UNSUPPORTED_PROVIDER` / `INVALID_FORMAT` / `UNSUPPORTED_URL_TYPE` / `INVALID_REQUEST`）は API の `error` フィールドをそのまま返す。
+- `src/lib/api-client.ts` の `createStock` にクライアント側 15 秒タイムアウト（ui-spec.md §7.3）を追加。`AbortSignal.timeout(15_000)` を `fetch` に渡し、タイムアウト時は `ApiError(0, 'CLIENT_TIMEOUT', ...)`、その他の `fetch` 例外（ネットワーク失敗）は `ApiError(0, 'NETWORK_ERROR', ...)` を throw する。サーバー側合計予算 12 秒の上に 3 秒のバッファを設け、サーバーレスポンスに余裕を持たせる定義通り。
+- `src/lib/api-client.test.ts` を新規追加。`formatCreateStockError` の全分岐をテスト 9 件で網羅し、spec §7.4 が SSOT として実装に反映されているか担保する。spec の表が更新されたら本テストも追従させる運用とする。
+
+### Changed
+- `src/pages/stocks.astro` の URL 送信エラーハンドリングを `formatCreateStockError` に差し替え。旧実装は `409` を「このスライドは既にストック済みです」にハードコード、それ以外は API の `error` メッセージをそのまま表示するだけだったが、新仕様の UPSTREAM_* 各 code に対するメッセージ表（ui-spec.md §7.4）に整合させた。`err instanceof ApiError` でガードし、`401` のみ別経路でログインリダイレクトする。`urlInput.value` をクリアしない（入力値保持）挙動も明示コメント化。
+
+### Notes
+- spec ↔ 実装の整合シリーズ（ADR-009）はこれで PR-A〜PR-D が完了。`docs/oembed-spec.md` / `docs/stock-api-spec.md` / `docs/ui-spec.md` と worker・client のすべてのレイヤーが揃った。GET ハンドラ（`worker/handlers/stocks.ts`）には `status` 参照や UPSTREAM_* 関連の挙動はないため変更不要だった。詳細画面（`src/pages/stock-detail.astro`）の `embed_url === null` フォールバックは ui-spec.md §5.3.1 の「データ不整合（仕様外）」記述に従う defensive コードとして既存挙動を維持。
+- バージョンは PATCH バンプ（0.0.5.0 → 0.0.5.1）。PR-C で API の公開挙動は確定済みで、本 PR は UI 側の追従なので互換性影響なし。
+
 ## [0.0.5.0] - 2026-06-14
 
 ### Changed

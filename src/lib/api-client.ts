@@ -1,5 +1,7 @@
 /** API 呼び出しヘルパー — ui-spec.md セクション 6 */
 
+const CREATE_STOCK_CLIENT_TIMEOUT_MS = 15_000; // ui-spec.md §7.3
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -7,6 +9,38 @@ export class ApiError extends Error {
     message: string,
   ) {
     super(message);
+  }
+}
+
+/**
+ * POST /api/stocks のエラーをユーザー表示用メッセージにマッピング（ui-spec.md §7.4）。
+ * 401 はリダイレクト処理を呼び出し側で行う想定のため、ここでは扱わない。
+ */
+export function formatCreateStockError(err: ApiError): string {
+  switch (err.code) {
+    case "INVALID_REQUEST":
+    case "INVALID_URL":
+    case "UNSUPPORTED_PROVIDER":
+    case "INVALID_FORMAT":
+    case "UNSUPPORTED_URL_TYPE":
+      return err.message || "エラーが発生しました";
+    case "UPSTREAM_NOT_FOUND":
+    case "UPSTREAM_FORBIDDEN":
+      return "スライドが見つかりません。URL が正しいか、スライドが公開されているか確認してください。";
+    case "DUPLICATE_STOCK":
+      return "このスライドは既にストック済みです";
+    case "UPSTREAM_FAILURE":
+    case "UPSTREAM_INVALID_RESPONSE":
+    case "UPSTREAM_TIMEOUT":
+      return "プロバイダから応答がありません。時間をおいて再度お試しください。";
+    case "CLIENT_TIMEOUT":
+      return "タイムアウトしました。もう一度お試しください。";
+    case "NETWORK_ERROR":
+      return "サーバーに接続できません。ネットワーク接続を確認してください。";
+    case "INTERNAL_ERROR":
+      return "エラーが発生しました。しばらくしてからやり直してください。";
+    default:
+      return err.message || "エラーが発生しました";
   }
 }
 
@@ -62,13 +96,30 @@ export async function fetchMe(): Promise<{ id: string; email: string; name: stri
   return res.json() as Promise<{ id: string; email: string; name: string }>;
 }
 
-/** ストック作成 */
+/** ストック作成（クライアント側 15 秒タイムアウト、ui-spec.md §7.3） */
 export async function createStock(url: string): Promise<StockItem> {
-  const res = await fetch('/api/stocks', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
-  });
+  let res: Response;
+  try {
+    res = await fetch('/api/stocks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(CREATE_STOCK_CLIENT_TIMEOUT_MS),
+    });
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      throw new ApiError(
+        0,
+        'CLIENT_TIMEOUT',
+        'タイムアウトしました。もう一度お試しください。',
+      );
+    }
+    throw new ApiError(
+      0,
+      'NETWORK_ERROR',
+      'サーバーに接続できません。ネットワーク接続を確認してください。',
+    );
+  }
   return handleResponse<StockItem>(res);
 }
 
