@@ -23,7 +23,26 @@
       // ユーザー名取得失敗は無視（ナビバー表示に影響しない）
     });
 
-  // ログアウト処理
+  // Toast 表示ヘルパー（ui-spec.md §4.2 / T-K）
+  // 単一の #toast 要素を再利用。連続表示時は前回タイマーをクリアして上書きする。
+  let toastTimer: number | undefined;
+  function showToast(message: string, kind: 'success' | 'error' = 'error', durationMs = 4000) {
+    const el = document.getElementById('toast');
+    if (!el) return;
+    if (toastTimer !== undefined) {
+      clearTimeout(toastTimer);
+    }
+    el.textContent = message;
+    el.className = `toast toast-${kind}`;
+    el.hidden = false;
+    toastTimer = window.setTimeout(() => {
+      el.hidden = true;
+      el.textContent = '';
+    }, durationMs);
+  }
+
+  // ログアウト処理。失敗時は alert ではなく toast で表示し、サーバー側 Cookie 削除
+  // が成功しなくてもクライアント側はログインページに遷移できる選択肢を残す。
   const logoutBtn = document.getElementById('logout-btn');
   logoutBtn?.addEventListener('click', async () => {
     try {
@@ -31,10 +50,10 @@
       if (res.ok) {
         window.location.href = '/login';
       } else {
-        alert('ログアウトに失敗しました。もう一度お試しください。');
+        showToast('ログアウトに失敗しました。もう一度お試しください。', 'error');
       }
     } catch {
-      alert('サーバーに接続できません。ネットワーク接続を確認してください。');
+      showToast('サーバーに接続できません。ネットワーク接続を確認してください。', 'error');
     }
   });
 </script>

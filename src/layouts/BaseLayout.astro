@@ -29,6 +29,8 @@ const appVersion = __APP_VERSION__;
   <main>
     <slot />
   </main>
+  <!-- Toast 通知（ui-spec.md §4.2 / T-K）。グローバル 1 箇所。各ページから showToast で表示 -->
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   <footer class="site-footer">
     <nav class="footer-nav" aria-label="フッターナビゲーション">
       <a href="/privacy">プライバシーポリシー</a>

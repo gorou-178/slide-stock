@@ -353,18 +353,27 @@ footer {
   margin-top: var(--space-md);
 }
 
+/* 長い日本語タイトル + バッジが 1 行に収まらないケースをモバイルで安全に扱うため、
+   title を flex: 1 + min-width: 0 で折り返し可能にし、バッジを flex-shrink: 0 で
+   サイズ固定する（ui-spec.md §5.3.3）。 */
 .stock-card-header {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-sm);
+  gap: var(--space-md);
   margin-bottom: var(--space-sm);
 }
 
 .stock-card-title {
+  flex: 1;
+  min-width: 0;
   font-size: var(--font-size-lg);
   font-weight: 600;
   line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.stock-card-header .badge {
+  flex-shrink: 0;
 }
 
 .stock-card-title a {
@@ -543,6 +552,19 @@ footer {
 .memo-textarea:focus {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+/* 保存成功フィードバック（ui-spec.md §5.4.2 / T-L）。
+   JS が 600ms クラスを付与する → CSS の transition で緑点灯後に元に戻る。 */
+.memo-textarea.memo-saved {
+  border-color: var(--color-success);
+  box-shadow: 0 0 0 2px rgba(24, 128, 56, 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .memo-textarea.memo-saved {
+    transition: none;
+  }
 }
 
 .memo-editor-footer {
@@ -809,6 +831,39 @@ footer {
   .navbar {
     padding-left: calc((100% - var(--max-width)) / 2 + var(--space-lg));
     padding-right: calc((100% - var(--max-width)) / 2 + var(--space-lg));
+  }
+}
+
+/* --- Toast notification (ui-spec.md §4.2 / T-K) --- */
+.toast {
+  position: fixed;
+  bottom: var(--space-lg);
+  right: var(--space-lg);
+  max-width: 360px;
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow-md);
+  font-size: var(--font-size-sm);
+  z-index: 1000;
+  background: var(--color-background);
+  border-left: 4px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.toast-error {
+  border-left-color: var(--color-error);
+}
+
+.toast-success {
+  border-left-color: var(--color-success);
+}
+
+@media (max-width: 599px) {
+  .toast {
+    left: var(--space-md);
+    right: var(--space-md);
+    bottom: var(--space-md);
+    max-width: none;
   }
 }
 

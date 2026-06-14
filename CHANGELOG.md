@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to a 4-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.0.7.0] - 2026-06-14
+
+design-review-2026-04-30 の Nice-to-have タスク 4 件をまとめて完了:
+**T-G**（return_to）/ **T-J**（StockCard モバイル折り返し）/ **T-L**（memo 保存フィードバック）/ **T-K**（logout toast）。
+
+### Added — T-G: 401 リダイレクトで return_to を保持
+
+- `worker/handlers/auth.ts` に `isSafeReturnTo(value)` ヘルパーを追加（`/` で始まり `//` で始まらない、改行を含まない相対パスのみ許容）。`handleLogin` で `?return_to=<相対パス>` を受け取って検証し、有効な値だけ `__Host-auth_return_to` Cookie に `encodeURIComponent` で保存（HttpOnly / Secure / SameSite=Lax / Max-Age 300 秒 / Path=/、`__Host-auth_state` と同じ属性）。`handleCallback` で同 Cookie を読み、`decodeURIComponent` 後に再検証して有効ならそのパスへ、無効なら従来どおり `/` へリダイレクト。`__Host-auth_return_to` Cookie は採用したかどうかにかかわらず Max-Age=0 で必ず削除。
+- `src/lib/api-client.ts` に `redirectToLogin()` を新規追加。現在の `pathname + search` を `return_to` クエリとして `/login?return_to=<encoded>` に遷移する。`/` と `/login*` 自体からは `return_to` を付けない（無限ループ／無意味な戻り先の回避）。
+- `src/pages/login.astro` で `?return_to` を読み、(a) 既に認証済みなら `/stocks` の代わりに `return_to` に遷移、(b) 「Google でログイン」リンクの href を `/api/auth/login?return_to=<encoded>` に書き換える。クライアント側でも同じ検証ルール（同一オリジンの相対パスのみ）を適用してサーバー側の二重防御とする。
+- `src/pages/stocks.astro` / `src/pages/stock-detail.astro` の 401 リダイレクト合計 7 箇所を `window.location.href = '/login'` から `redirectToLogin()` 呼び出しに置き換え。Navbar のログアウト成功時は意図的に `return_to` を付けない（再ログイン後はフレッシュな `/stocks` に着地させる方が自然）。
+- `worker/handlers/auth.test.ts` に return_to 関連の **10 件のテスト** を追加。`handleLogin` 側（return_to 採用 / Cookie 属性 / 未指定 / `//evil.com` / 絶対 URL / 先頭スラッシュなしの 6 件）と `handleCallback` 側（有効値で採用 / `//evil.com` / 絶対 URL / 空文字 / Cookie 常時削除の 5 件）を網羅。オープンリダイレクト対策を回帰防止できる体制に。
+- `docs/auth-spec.md` §3.1 / §3.2 を return_to 仕様で更新。`docs/ui-spec.md` §5.2（login）に return_to クエリパラメータの説明、§6.2 に `redirectToLogin()` の説明と二重検証ルールを追記。
+
+### Added — T-J: StockCard モバイル折り返し仕様
+
+- `public/styles/global.css` の `.stock-card-header` を `display: flex; align-items: flex-start; gap: var(--space-md)` に整理し、`justify-content: space-between` を撤去。`.stock-card-title` に `flex: 1; min-width: 0; overflow-wrap: anywhere` を付与して長い日本語タイトルでも折り返しを許可。`.stock-card-header .badge` に `flex-shrink: 0` を付与してバッジを縮ませない／改行させない。
+- `docs/ui-spec.md` §5.3.3 に「レイアウト（モバイル折り返し対応、T-J）」セクションを追加。flex の構成と `min-width: 0` が必要な理由（flexbox 既定 `min-width: auto` の解除）まで仕様として固定。
+
+### Added — T-L: memo 保存成功フィードバック強化
+
+- `src/pages/stock-detail.astro` の memo 保存成功ハンドラに視覚的フィードバックを追加。textarea に `.memo-saved` クラスを 600ms 付与（緑ボーダー + リング）。ステータステキストを `保存しました` から `✓ 保存しました HH:MM`（クライアント時計の HH:MM ゼロ埋め）に変更し、3 秒後フェードアウトの既存挙動は維持。
+- `public/styles/global.css` に `.memo-textarea.memo-saved { border-color: var(--color-success); box-shadow: 0 0 0 2px rgba(24, 128, 56, 0.25); }` を追加。`prefers-reduced-motion: reduce` 環境では transition を抑制。
+- `docs/ui-spec.md` §5.4.2 の保存処理フローを更新。「保存成功フィードバック（T-L、視覚的強化）」表で textarea ボーダー点灯・タイムスタンプ・`aria-live` の継続・モーション抑制を仕様化。
+
+### Added — T-K: logout 失敗を toast 通知に置き換え
+
+- `src/layouts/BaseLayout.astro` の末尾に単一の `<div id="toast" role="status" aria-live="polite" hidden></div>` を追加。グローバル 1 箇所にだけ存在する toast 受け皿。
+- `src/components/Navbar.astro` にインラインの `showToast(message, kind, durationMs)` ヘルパーを追加（スタックなし、連続表示時は前回タイマーを clear して上書き、デフォルト 4 秒）。ログアウト失敗時とネットワーク失敗時の `alert()` 呼び出しを `showToast(message, 'error')` に置換。
+- `public/styles/global.css` に `.toast` / `.toast-error` / `.toast-success` を追加。右下固定、`var(--shadow-md)`、`border-left: 4px solid` の色違いで種別を表現。`max-width: 599px` では左右パディングを画面端まで広げる。
+- `docs/ui-spec.md` §4.2 のログアウト失敗時の挙動を「コンソールにエラー記録、ユーザーにはアラート表示」から「toast 通知でメッセージ表示」に更新。toast の HTML 配置（BaseLayout 末尾）・kind（error / success）・スタックなし・モバイルレイアウトの設計判断を仕様として明文化。
+
+### Notes
+- MINOR バンプ（0.0.6.0 → 0.0.7.0）。return_to は新規機能、UX 改善 3 件、4 件分の仕様追記を含むため。
+- 残タスク: `tasks/design-review-2026-04-30.md` のブロッカー T-C / T-D（LP スクリーンショット）と、Nice-to-have T-F / T-H / T-I（inline confirm / 空状態強化 / サンプル URL ボタン）。
+
 ## [0.0.6.0] - 2026-06-14
 
 ### Added

@@ -7,7 +7,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <div class="login-container" id="login-container" hidden>
     <h1>Slide Stock</h1>
     <p>Google アカウントでログインしてください</p>
-    <a href="/api/auth/login" class="btn-google-login">
+    <a href="/api/auth/login" id="login-link" class="btn-google-login">
       Google でログイン
     </a>
   </div>
@@ -20,11 +20,28 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 </BaseLayout>
 
 <script>
-  // 認証済みなら /stocks にリダイレクト
+  // return_to の検証: 同一オリジン内の相対パスのみ許可（spec §5.2、サーバー側で再検証あり）
+  function safeReturnTo(value: string | null): string | null {
+    if (!value) return null;
+    if (!value.startsWith('/')) return null;
+    if (value.startsWith('//')) return null;
+    return value;
+  }
+
+  // 認証済みなら /stocks（または return_to）にリダイレクト
+  const params = new URLSearchParams(window.location.search);
+  const returnTo = safeReturnTo(params.get('return_to'));
+
+  // ログインリンクに return_to を付与
+  const loginLink = document.getElementById('login-link') as HTMLAnchorElement | null;
+  if (loginLink && returnTo) {
+    loginLink.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`;
+  }
+
   fetch('/api/me')
     .then((res) => {
       if (res.ok) {
-        window.location.href = '/stocks';
+        window.location.href = returnTo ?? '/stocks';
       } else {
         // 未認証: ログインボタンを表示
         document.getElementById('login-loading')!.hidden = true;

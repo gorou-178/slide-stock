@@ -49,7 +49,14 @@ import MemoEditor from '../components/MemoEditor.astro';
 </BaseLayout>
 
 <script>
-  import { fetchMe, fetchStock, saveMemo, deleteStock, ApiError } from '../lib/api-client';
+  import {
+    fetchMe,
+    fetchStock,
+    saveMemo,
+    deleteStock,
+    redirectToLogin,
+    ApiError,
+  } from '../lib/api-client';
 
   const PROVIDER_LABELS: Record<string, string> = {
     speakerdeck: 'SpeakerDeck',
@@ -104,7 +111,7 @@ import MemoEditor from '../components/MemoEditor.astro';
     // 認証チェック
     const user = await fetchMe().catch(() => null);
     if (!user) {
-      window.location.href = '/login';
+      redirectToLogin();
       return;
     }
 
@@ -159,7 +166,7 @@ import MemoEditor from '../components/MemoEditor.astro';
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         if (err.status === 401) {
-          window.location.href = '/login';
+          redirectToLogin();
           return;
         }
         if (err.status === 403) {
@@ -199,7 +206,16 @@ import MemoEditor from '../components/MemoEditor.astro';
 
     try {
       await saveMemo(stockId, text);
-      memoStatus.textContent = '保存しました';
+      // 保存成功フィードバック（ui-spec.md §5.4.2 / T-L）:
+      // 1) textarea ボーダーを 600ms 緑点灯
+      // 2) ✓ アイコン + 「保存しました HH:MM」 を表示
+      // 3) 3 秒後にステータスメッセージはフェードアウト
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      memoTextarea.classList.add('memo-saved');
+      setTimeout(() => memoTextarea.classList.remove('memo-saved'), 600);
+      memoStatus.textContent = `✓ 保存しました ${hh}:${mm}`;
       memoStatus.className = 'memo-status success';
       setTimeout(() => {
         memoStatus.textContent = '';
@@ -207,7 +223,7 @@ import MemoEditor from '../components/MemoEditor.astro';
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         if (err.status === 401) {
-          window.location.href = '/login';
+          redirectToLogin();
           return;
         }
         memoStatus.textContent = err.message;
