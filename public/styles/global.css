@@ -120,6 +120,34 @@ footer {
   font-size: var(--font-size-sm);
 }
 
+/* --- Site footer (ui-spec.md §4.1) --- */
+.site-footer .footer-nav {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-sm);
+}
+
+.site-footer .footer-nav a {
+  color: var(--color-text-secondary);
+  text-decoration: none;
+}
+
+.site-footer .footer-nav a:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
+.site-footer .footer-meta {
+  margin: 0;
+}
+
+.site-footer .footer-version {
+  font-family: var(--font-family-mono);
+  margin-left: var(--space-sm);
+}
+
 /* --- Navbar --- */
 .navbar {
   display: flex;
@@ -782,4 +810,67 @@ footer {
     padding-left: calc((100% - var(--max-width)) / 2 + var(--space-lg));
     padding-right: calc((100% - var(--max-width)) / 2 + var(--space-lg));
   }
+}
+
+/* --- Legal pages (/privacy, /terms) --- */
+.legal-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-md) 0;
+}
+
+.legal-header {
+  margin-bottom: var(--space-2xl);
+  padding-bottom: var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.legal-header h1 {
+  font-size: var(--font-size-2xl);
+  margin-bottom: var(--space-xs);
+}
+
+.legal-meta {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.legal-page section {
+  margin-bottom: var(--space-xl);
+}
+
+.legal-page section h2 {
+  font-size: var(--font-size-xl);
+  margin-bottom: var(--space-md);
+}
+
+.legal-page section p,
+.legal-page section ul {
+  margin-bottom: var(--space-md);
+}
+
+.legal-page section ul {
+  padding-left: var(--space-lg);
+}
+
+.legal-page section li {
+  margin-bottom: var(--space-xs);
+}
+
+.legal-page section code {
+  font-family: var(--font-family-mono);
+  background: var(--color-surface);
+  padding: 0 var(--space-xs);
+  border-radius: var(--border-radius-sm);
+  font-size: 0.9em;
+}
+
+.legal-page a {
+  color: var(--color-primary);
+}
+
+.legal-back {
+  margin-top: var(--space-2xl);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-border);
 }
