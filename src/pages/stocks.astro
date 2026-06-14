@@ -11,7 +11,14 @@ import StockList from '../components/StockList.astro';
 </BaseLayout>
 
 <script>
-  import { fetchMe, fetchStocks, createStock, type StockItem } from '../lib/api-client';
+  import {
+    fetchMe,
+    fetchStocks,
+    createStock,
+    formatCreateStockError,
+    ApiError,
+    type StockItem,
+  } from '../lib/api-client';
 
   const PROVIDER_LABELS: Record<string, string> = {
     speakerdeck: 'SpeakerDeck',
@@ -178,21 +185,18 @@ import StockList from '../components/StockList.astro';
       }
       urlInput.value = '';
     } catch (err: unknown) {
-      if (err && typeof err === 'object' && 'status' in err) {
-        const apiErr = err as { status: number; message: string };
-        if (apiErr.status === 401) {
+      if (err instanceof ApiError) {
+        // 401 はログインリダイレクト（ui-spec.md §7.4）
+        if (err.status === 401) {
           window.location.href = '/login';
           return;
         }
-        if (apiErr.status === 409) {
-          urlError.textContent = 'このスライドは既にストック済みです';
-        } else {
-          urlError.textContent = apiErr.message || 'エラーが発生しました';
-        }
+        urlError.textContent = formatCreateStockError(err);
       } else {
         urlError.textContent = 'サーバーに接続できません。ネットワーク接続を確認してください。';
       }
       urlError.hidden = false;
+      // 入力値はフォームに保持（ui-spec.md §7.4）。urlInput.value はクリアしない
     } finally {
       submitBtn.disabled = false;
       submitBtn.textContent = '追加';
