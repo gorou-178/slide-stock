@@ -193,6 +193,93 @@ describe("GET /api/auth/login", () => {
     expect(state1).not.toBe(state2);
   });
 
+  // --- 0.0.7.1: 必須 env / Secrets の早期検証 ---
+
+  describe("環境変数 / Secrets 未設定時のガード", () => {
+    function envWithout<K extends keyof AuthEnv>(key: K): AuthEnv {
+      const copy = { ...TEST_ENV } as Record<string, unknown>;
+      delete copy[key as string];
+      return copy as AuthEnv;
+    }
+
+    it("GOOGLE_CLIENT_ID 未設定 → 500 CONFIG_ERROR、Google にリダイレクトしない", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const response = await handleLogin(
+        createRequest("/api/auth/login"),
+        envWithout("GOOGLE_CLIENT_ID"),
+      );
+      expect(response.status).toBe(500);
+      const body = (await response.json()) as { code: string };
+      expect(body.code).toBe("CONFIG_ERROR");
+      expect(response.headers.get("Location")).toBeNull();
+      // ログに欠けているキー名が記録される
+      expect(consoleSpy).toHaveBeenCalledOnce();
+      const logged = JSON.parse(consoleSpy.mock.calls[0][0] as string);
+      expect(logged.missing).toContain("GOOGLE_CLIENT_ID");
+      consoleSpy.mockRestore();
+    });
+
+    it("CALLBACK_URL 未設定 → 500 CONFIG_ERROR", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const response = await handleLogin(
+        createRequest("/api/auth/login"),
+        envWithout("CALLBACK_URL"),
+      );
+      expect(response.status).toBe(500);
+      const body = (await response.json()) as { code: string };
+      expect(body.code).toBe("CONFIG_ERROR");
+      consoleSpy.mockRestore();
+    });
+
+    it("空文字も未設定として扱う（GOOGLE_CLIENT_SECRET=''）", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const response = await handleLogin(
+        createRequest("/api/auth/login"),
+        { ...TEST_ENV, GOOGLE_CLIENT_SECRET: "" },
+      );
+      expect(response.status).toBe(500);
+      const body = (await response.json()) as { code: string };
+      expect(body.code).toBe("CONFIG_ERROR");
+      const logged = JSON.parse(consoleSpy.mock.calls[0][0] as string);
+      expect(logged.missing).toContain("GOOGLE_CLIENT_SECRET");
+      consoleSpy.mockRestore();
+    });
+
+    it("handleCallback でも同じガードが効く（SESSION_SECRET 未設定）", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const request = createRequest(
+        `/api/auth/callback?code=x&state=y`,
+        { cookie: "__Host-auth_state=y" },
+      );
+      const response = await handleCallback(
+        request,
+        envWithout("SESSION_SECRET"),
+      );
+      expect(response.status).toBe(500);
+      const body = (await response.json()) as { code: string };
+      expect(body.code).toBe("CONFIG_ERROR");
+      const logged = JSON.parse(consoleSpy.mock.calls[0][0] as string);
+      expect(logged.handler).toBe("handleCallback");
+      expect(logged.missing).toContain("SESSION_SECRET");
+      consoleSpy.mockRestore();
+    });
+
+    it("欠けているキーがすべて missing に列挙される（複数同時）", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const broken = {
+        ...TEST_ENV,
+      } as Partial<AuthEnv> as AuthEnv;
+      delete (broken as Record<string, unknown>).GOOGLE_CLIENT_ID;
+      delete (broken as Record<string, unknown>).CALLBACK_URL;
+      await handleLogin(createRequest("/api/auth/login"), broken);
+      const logged = JSON.parse(consoleSpy.mock.calls[0][0] as string);
+      expect(logged.missing).toEqual(
+        expect.arrayContaining(["GOOGLE_CLIENT_ID", "CALLBACK_URL"]),
+      );
+      consoleSpy.mockRestore();
+    });
+  });
+
   // --- T-G: return_to サポート（spec auth-spec.md §3.1） ---
 
   describe("return_to パラメータ", () => {

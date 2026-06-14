@@ -25,6 +25,49 @@ export interface AuthDeps {
 
 // --- ヘルパー ---
 
+/**
+ * 必須環境変数 / Secrets が揃っているかを検証する。
+ *
+ * Cloudflare Pages の wrangler.toml 設定不備や Secrets 未登録に気づかず、Google に
+ * `client_id=undefined` を含む URL を返してしまう事故（CHANGELOG 0.0.7.1）の再発防止。
+ *
+ * 検証対象は handleLogin と handleCallback の最大公約数（CALLBACK_URL,
+ * GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET）。1 つでも欠けたら
+ * 500 CONFIG_ERROR を返し、欠けているキー名をサーバーログに残す。
+ */
+function findMissingAuthEnv(env: AuthEnv): string[] {
+  const required: ReadonlyArray<keyof AuthEnv> = [
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "SESSION_SECRET",
+    "CALLBACK_URL",
+  ];
+  return required.filter((k) => {
+    const v = env[k];
+    return typeof v !== "string" || v.length === 0;
+  }) as string[];
+}
+
+function configError(missing: string[], action: string): Response {
+  console.error(
+    JSON.stringify({
+      action: "auth_config_error",
+      handler: action,
+      missing,
+      hint:
+        "Cloudflare Pages の Secrets / wrangler.toml [vars] が未設定の可能性。docs/auth-spec.md §9 を参照。",
+    }),
+  );
+  return Response.json(
+    {
+      error:
+        "サーバーの設定に問題があります。管理者にお問い合わせください。",
+      code: "CONFIG_ERROR",
+    },
+    { status: 500 },
+  );
+}
+
 function generateState(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -112,6 +155,11 @@ export async function handleLogin(
   request: Request,
   env: AuthEnv,
 ): Promise<Response> {
+  const missing = findMissingAuthEnv(env);
+  if (missing.length > 0) {
+    return configError(missing, "handleLogin");
+  }
+
   const state = generateState();
 
   const url = new URL(request.url);
@@ -151,6 +199,11 @@ export async function handleCallback(
   env: AuthEnv,
   deps: AuthDeps = {},
 ): Promise<Response> {
+  const missing = findMissingAuthEnv(env);
+  if (missing.length > 0) {
+    return configError(missing, "handleCallback");
+  }
+
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
