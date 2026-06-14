@@ -438,10 +438,43 @@ CALLBACK_URL=http://localhost:4321/api/auth/callback
 TEST_MODE=true
 ```
 
-### 本番環境
+### 本番環境（Cloudflare Pages）
 
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET` は `wrangler secret put` で設定
-- `CALLBACK_URL` は `wrangler.toml` の `[vars]` で設定
+本プロジェクトの本番は **Cloudflare Pages**（`wrangler pages deploy dist/`）で動く。
+そのため `wrangler.toml` には `pages_build_output_dir = "./dist"` が必須。これを忘れると
+Wrangler は本ファイルを `Ignoring configuration file for now` として完全に無視し、
+`[vars]` も `[[d1_databases]]` も本番に反映されず、`env.GOOGLE_CLIENT_ID` 等が
+`undefined` になる（→ `?client_id=undefined` で Google が 404 を返す事故が起こる、
+0.0.7.1 のリグレッション対象）。
+
+#### Plain な環境変数（`wrangler.toml` の `[vars]` 経由）
+
+| 変数 | 設定場所 |
+|------|---------|
+| `CALLBACK_URL` | `wrangler.toml` の `[vars]` |
+| `SESSION_MAX_AGE`（任意） | 同上 |
+
+#### Secrets（`wrangler.toml` には書けない、別建てで設定する）
+
+Cloudflare Dashboard（Pages プロジェクト → Settings → Environment variables / Secrets）か
+CLI で個別に登録する:
+
+```bash
+wrangler pages secret put GOOGLE_CLIENT_ID --project-name=slide-stock
+wrangler pages secret put GOOGLE_CLIENT_SECRET --project-name=slide-stock
+wrangler pages secret put SESSION_SECRET --project-name=slide-stock
+```
+
+Pages プロジェクト名は Cloudflare Dashboard で確認（`slide-stock.pages.dev` であれば
+プロジェクト名は `slide-stock`）。
+
+#### 早期検証（防御）
+
+`worker/handlers/auth.ts` の `handleLogin` / `handleCallback` 冒頭で
+`findMissingAuthEnv(env)` を呼び、上記 4 つの値が `string` で空文字列でないことを
+検証する。1 つでも欠けたら **500 `CONFIG_ERROR`** を返し、欠けたキー名を
+`auth_config_error` ログに記録する。これで万一 Secrets を再設定し忘れて再デプロイ
+しても「Google にブロークン URL を返す」ことはなく、サーバーログから即修正できる。
 
 ---
 

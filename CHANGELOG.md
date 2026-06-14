@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to a 4-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.0.7.1] - 2026-06-14
+
+### Fixed
+- 本番（Cloudflare Pages）の Google ログインが `client_id=undefined` を含む URL になり Google から 404 を返される事象を修正。根本原因は `wrangler.toml` に `pages_build_output_dir` が無く、Wrangler が「`Ignoring configuration file for now`」と警告して本ファイルを完全に無視していたこと。結果として `[vars] CALLBACK_URL` と `[[d1_databases]] DB` も本番に反映されていなかった。`wrangler.toml` に `pages_build_output_dir = "./dist"` を追加し、Pages モードの設定ファイルとして正しく解釈されるようにした。`main = "worker/index.ts"` は Pages では参照されない Workers 専用設定なので削除。
+- 本ファイルの修正だけでは Secrets は引き継がれないため、`docs/auth-spec.md` §9 本番環境を全面書き換え。`wrangler secret put`（Workers モード）から `wrangler pages secret put --project-name=slide-stock`（Pages モード）への切り替えを明示し、`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `SESSION_SECRET` の個別登録手順をコマンドつきで記載。Cloudflare Dashboard 経由でも同等であることも明記。
+
+### Added
+- `worker/handlers/auth.ts` に `findMissingAuthEnv(env)` ヘルパーと `configError(missing, action)` レスポンスを追加。`handleLogin` / `handleCallback` の冒頭で `CALLBACK_URL` / `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `SESSION_SECRET` が `string` で空文字列でないことを検証し、1 つでも欠けたら **500 `CONFIG_ERROR`** を即返す。`console.error(action="auth_config_error", handler=..., missing=[...], hint=...)` の構造化ログで欠けたキー名と参照先 spec を残す。これで再度 Secrets 未設定で再デプロイされても Google にブロークン URL を投げる前にサーバーログから即気づける防御線になる。
+- `worker/handlers/auth.test.ts` に CONFIG_ERROR ガードのテスト **5 件**を追加: `GOOGLE_CLIENT_ID` 未設定で 500 が返り Location ヘッダーが付かないこと / `CALLBACK_URL` 未設定 / 空文字も未設定として扱う / `handleCallback` でも同じガードが効くこと / 複数キーが同時に欠けたとき `missing` 配列にすべて列挙されること。
+
+### Changed
+- `wrangler.toml` のコメントを「Pages 用 wrangler 設定」「Secrets は別建てで `wrangler pages secret put` を使う」「`pages_build_output_dir` を忘れると本ファイル全体が無視されて事故になる」という運用上の落とし穴と対処を残す形に書き換え。
+
+### Notes
+- PATCH バンプ（0.0.7.0 → 0.0.7.1）。挙動の修正と防御層追加のみで、公開 API の正常系挙動は変えない。
+- **本 PR マージだけでは本番は復旧しない**。Track B として下記コマンドの実行が別途必要:
+  ```
+  wrangler pages secret put GOOGLE_CLIENT_ID --project-name=slide-stock
+  wrangler pages secret put GOOGLE_CLIENT_SECRET --project-name=slide-stock
+  wrangler pages secret put SESSION_SECRET --project-name=slide-stock
+  ```
+
 ## [0.0.7.0] - 2026-06-14
 
 design-review-2026-04-30 の Nice-to-have タスク 4 件をまとめて完了:
