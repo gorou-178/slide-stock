@@ -5,10 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to a 4-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
-## [0.0.3.1] - 2026-05-02
+## [0.0.4.0] - 2026-05-02
+
+### Added
+- `docs/adr/009-spec-ssot-and-sync-rollback.md` を新規作成。プロジェクトのプロセス原則として「`docs/*-spec.md` を SSOT、ADR は断面スナップショット、spec と実装が矛盾したら実装を spec に合わせる」を確定。あわせて同期 oEmbed 取得のセマンティクスを「fetch-first + insert-on-success / 失敗時は INSERT しない（DB ロールバック相当） / `UPSTREAM_*` 5 種を 400/502/504 で返却 / 指数バックオフ 3 回 / 各 3 秒 / 合計 12 秒予算」に統一。`status` カラムは現時点で意味のない情報であるため YAGNI 原則で **廃止のまま維持**（migration 0004 は作らない、§4-3）。spec で扱いが未定義だった「並列リクエストでの UNIQUE 制約競合」「D1 INSERT 自体の失敗」の挙動も §4-4 で明文化（前者 → 409 `DUPLICATE_STOCK`、後者 → 500 `INTERNAL_ERROR`、いずれも半端なデータは残らない）。後続 PR-B〜PR-D の実装計画もここに整理。
+- `CLAUDE.md` に「Spec / ADR / 実装の関係」セクションを追加。spec が SSOT、ADR は断面、impl は spec に追従する原則と、監査時の正しいフロー（spec → impl 比較 → impl の修正タスク起票）を明文化。
 
 ### Changed
-- `docs/architecture.md` を sync モデルに整合（v0.0.3.0 / T-A のフォローアップ）。システム全体構成図から Cloudflare Queues / Queue Consumer を削除し、`API → oEmbed Provider` の同期取得エッジに置換。スライド登録のシーケンス図を「pending INSERT → enqueue → 非同期 UPDATE」から「重複チェック → 同期 oEmbed 取得（指数バックオフ 3 回 / 各 3 秒 / 合計 12 秒予算）→ 成功時のみ `status='ready'` で 1 回 INSERT」に書き換え、リトライ／恒久エラー／成功の各分岐を明示。技術構成セクションの「非同期処理」を「oEmbed メタデータ取得（同期）」に改題し、リトライ予算と失敗時の DB ロールバック方針を記述。コスト最適化方針の Cloudflare Queues 行を「MVP では使用しない（同期モデル）」へ更新。
+- `docs/adr/004-remove-queue.md` のステータスを「Proposed」から「Superseded by ADR-009」に変更。Queue 廃止 + 同期化という大方針は維持されるが、本 ADR-004 が採用した optimistic insert + best-effort 取得セマンティクスは ADR-009 で逆転される旨を明記。`status` カラム削除（migration 0003）は ADR-009 でも維持されるため Supersede 対象外。本 ADR は歴史記録として残す。
+- `docs/oembed-spec.md` / `docs/stock-api-spec.md` / `docs/database.md` / `docs/ui-spec.md` から `status` フィールド・`StockStatus` 型・`s.status` SELECT 参照・`status='ready'` 等を全削除し、ADR-009 §4-3 の「YAGNI で廃止」方針と整合させた。`StockResponse` 型と `StockListItem` 型から `status` フィールドを除去、API レスポンス JSON 例からも削除。`stocks.status` カラムは migration 0003 後の状態（カラム不在）を canonical として固定。
+- `docs/stock-api-spec.md` §3.4 / §3.5 / §3.6 / §3.8 / §8.1 を ADR-009 §4-4 に整合。並列レースで UNIQUE 制約違反が発生した場合の挙動（409 `DUPLICATE_STOCK`）と、INSERT 中の一般 D1 エラー（500 `INTERNAL_ERROR`）を spec として明文化。テストケースに P20（並列レース）・P21（D1 INSERT 失敗）を追加し、いずれも DB に当該 canonical_url の stock が残らないことを期待値に含める。
+- `docs/database.md` のステータス遷移図を削除し、`status` カラム廃止を canonical として記述。stock のライフサイクルは「存在しない → 存在する（メタデータ充足）」のみと整理。インデックス方針表に `(user_id, canonical_url)` UNIQUE（migration 0002）を追加し、並列レース時の最終防衛線である旨を明記。
+- `docs/ui-spec.md` §7.4 のエラー状態表を spec の `UPSTREAM_*` 5 種に細分化（`UPSTREAM_NOT_FOUND` / `UPSTREAM_FORBIDDEN` を「スライドが見つかりません」、`UPSTREAM_FAILURE` / `UPSTREAM_INVALID_RESPONSE` / `UPSTREAM_TIMEOUT` を「プロバイダから応答がありません」、`INTERNAL_ERROR` を「エラーが発生しました」にマッピング）。並列レースの 409 もユーザーから見ると事前重複と同じ表示になる旨を併記。
+- `docs/architecture.md` を sync モデルに整合（v0.0.3.0 / T-A のフォローアップ）。システム全体構成図から Cloudflare Queues / Queue Consumer を削除し、`API → oEmbed Provider` の同期取得エッジに置換。スライド登録のシーケンス図を「pending INSERT → enqueue → 非同期 UPDATE」から「重複チェック → 同期 oEmbed 取得（指数バックオフ 3 回 / 各 3 秒 / 合計 12 秒予算）→ 成功時のみ INSERT」に書き換え、リトライ／恒久エラー／成功の各分岐を明示。技術構成セクションの「非同期処理」を「oEmbed メタデータ取得（同期）」に改題し、リトライ予算と失敗時の DB ロールバック方針を記述。コスト最適化方針の Cloudflare Queues 行を「MVP では使用しない（同期モデル）」へ更新。
+- ADR-009 §4-5 で Google Slides の「軟性失敗（soft failure）」概念を撤回。title は検索性・一覧性の中核情報のため、HTML タイトル取得失敗時も他プロバイダ（SpeakerDeck / Docswell）と同等の hard failure として扱う方針に統一。`oembed-spec.md` §4 を全面書き換え（§4.3 タイトル取得を try/catch + null 返しから throw / `PermanentError` / 一般 `Error` に変更、§4.5 「常に成功」を撤回、エラーケース表を §6.3 と整合）。§5.1 の mermaid フローで Google Slides も「成功 / 恒久エラー / リトライ上限到達」の 3 分岐を明示。§6.3 と §8 のタイムアウト表を 3 秒 / 合計 12 秒予算に統一。`stock-api-spec.md` §8.1 P3 の正常系を「有効な `<title>` を含む」に厳格化、軟性失敗 P4b を削除。テスト P22〜P26 を追加（HTML title 欠落 → 502 `UPSTREAM_INVALID_RESPONSE` / 5xx 連続失敗 → 502 `UPSTREAM_FAILURE` / タイムアウト → 504 `UPSTREAM_TIMEOUT` / 401・403 → 400 `UPSTREAM_FORBIDDEN` / 404 → 400 `UPSTREAM_NOT_FOUND`、いずれも stock は作成しない）。`ui-spec.md` §5.3.3 / §5.4.1 / §7 StockResponse 型コメント / `database.md` のライフサイクル記述からも軟性失敗の言及を削除。
 
 ## [0.0.3.0] - 2026-05-02
 

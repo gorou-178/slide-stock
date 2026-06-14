@@ -5,6 +5,18 @@
 
 ---
 
+## Spec / ADR / 実装の関係
+
+- **`docs/*-spec.md` が SSOT（Single Source of Truth）**。プロジェクトの canonical な仕様はここにある。
+- **ADR（`docs/adr/*.md`）は断面のスナップショット**。「いつ・なぜ・どう決めたか」の歴史記録であり、現行仕様を知りたいときは spec を見る。古い ADR は新 ADR で Supersede され得る（例: ADR-004 → ADR-009）。
+- **spec と実装が矛盾している場合、実装を spec に合わせる**。逆向き（spec を実装の現実に合わせる）は禁止。spec の存在価値（あるべき姿の宣言）が消えるため。
+- 監査の正しいフローは「spec を読む → 実装と比べる → 実装の修正タスクを起票する」。
+- 仕様自体を変えたいとき（要件変更）は、まず spec を更新してから実装を追従させる。
+
+詳細は [docs/adr/009-spec-ssot-and-sync-rollback.md](docs/adr/009-spec-ssot-and-sync-rollback.md) を参照。
+
+---
+
 ## 言語
 
 ユーザーや読者が目にする**散文**は日本語、機械が解釈する**識別子・規約文字列**は英語、で切り分ける。

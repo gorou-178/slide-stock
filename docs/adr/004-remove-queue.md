@@ -1,7 +1,14 @@
 # ADR-004: Queue 廃止 — Cloudflare Queues から同期 oEmbed 取得への移行
 
 ## ステータス
-Proposed
+**Superseded by [ADR-009](009-spec-ssot-and-sync-rollback.md)** — 「Queue 廃止 + 同期化」という大方針自体は維持されるが、本 ADR が採用した次の 2 つのセマンティクスは ADR-009 で逆転している:
+
+1. **失敗時の扱い**: 本 ADR は「optimistic insert + best-effort 取得 → 失敗時も stock を残す」を選んだが、ADR-009 は spec を SSOT として「fetch-first + insert-on-success → 失敗時は INSERT しない（DB ロールバック相当）+ `UPSTREAM_*` エラーを返却」に切り替える。
+2. **`status` カラム**: 本 ADR は「DEFAULT を `'ready'` に変更しスキーマには残す」と書いたが、その後の migration 0003 で物理削除された。ADR-009 で migration 0004 を追加して再導入する。
+
+本 ADR は「Queue → 同期化」への移行決定として歴史的価値があるため残す。canonical な現行仕様は spec（`docs/oembed-spec.md` §5–§7、`docs/stock-api-spec.md` §3、`docs/architecture.md`）と ADR-009 を参照。
+
+旧ステータス: Proposed（実装は本 ADR の方針で進められた）
 
 ## コンテキスト
 
