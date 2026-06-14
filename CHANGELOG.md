@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to a 4-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.0.5.0] - 2026-06-14
+
+### Changed
+- ADR-009 PR-C 完了: `worker/handlers/stock-create.ts` を fetch-first + rollback semantics に切り替え。重複チェック通過 → `fetchWithRetry` で同期 oEmbed 取得 → 成功時のみメタデータ充足済みで **1 回だけ INSERT** という新フローへ刷新（spec `stock-api-spec.md` §3.5 / §3.6、`oembed-spec.md` §5、ADR-009 §4-2）。旧 optimistic insert（INSERT 後にメタデータ UPDATE、失敗時は `title=null` で stock を残す）の経路を完全に削除。
+- oEmbed 取得エラーを HTTP レスポンスにマッピング（spec §3.5 / §3.8、ADR-009 §4-2）: `UpstreamNotFoundError` → 400 `UPSTREAM_NOT_FOUND`、`UpstreamForbiddenError` → 400 `UPSTREAM_FORBIDDEN`、`UpstreamInvalidResponseError` → 502 `UPSTREAM_INVALID_RESPONSE`、`UpstreamFailureError` → 502 `UPSTREAM_FAILURE`、`UpstreamTimeoutError` → 504 `UPSTREAM_TIMEOUT`。それ以外の想定外 `Error` は 500 `INTERNAL_ERROR`。`console.error` の `oembed_fetch_failed` ログには `errorName` を含め、プロバイダ仕様変更の検知を容易にした。
+- D1 INSERT エラーの扱いを spec §3.6 / ADR-009 §4-4 に揃えた: UNIQUE 制約違反（並列レース）→ 409 `DUPLICATE_STOCK`、その他の D1 例外 → 500 `INTERNAL_ERROR`（`console.error` で `stock_insert_failed` ログ）。いずれも INSERT 中断のみで、半端なデータは残らない。
+- `worker/lib/oembed.ts` に `PermanentError` のサブクラス `UpstreamNotFoundError` / `UpstreamForbiddenError` / `UpstreamInvalidResponseError` を追加し、handler が `instanceof` で `UPSTREAM_*` を判別できるようにした。各 fetcher の throw サイト（404 / 401・403 / レスポンス形式不正）を該当サブクラスに置き換え。`instanceof PermanentError` での「リトライしない」判定は従来どおり通る（サブクラス継承のため）。
+
+### Removed
+- `worker/handlers/stocks.test.ts` から旧 P5「oEmbed 取得失敗でも stock は作成される（メタデータ null）」を削除。fetch-first + rollback semantics 下では成立しないテストケースのため。
+
+### Added
+- `worker/handlers/stocks.test.ts` にプロバイダエラー UPSTREAM_* マッピングのテスト 10 件を追加（spec §8.1 P14〜P18 / P22〜P26）: SpeakerDeck 404 → `UPSTREAM_NOT_FOUND` / Docswell 403 → `UPSTREAM_FORBIDDEN` / SpeakerDeck リトライ上限到達 → `UPSTREAM_FAILURE` / Docswell 合計予算切れ → `UPSTREAM_TIMEOUT` / SpeakerDeck 形式不正 → `UPSTREAM_INVALID_RESPONSE`、および Google Slides の `<title>` 欠落 / 5xx / タイムアウト / 401・403 / 404 の 5 ケース。各テストで「該当 `canonical_url` の stock が DB に残らない」ことを `findStock` ヘルパーで検証。
+- `worker/handlers/stocks.test.ts` に D1 INSERT 失敗のテスト 2 件を追加（spec §8.1 P20 / P21）: 並列レースの UNIQUE 制約違反 → 409 `DUPLICATE_STOCK`、D1 一般エラー → 500 `INTERNAL_ERROR`。fake `StockEnv` を構築し、SELECT は通すが INSERT で指定したエラーを投げる形でシミュレートする。
+- `worker/handlers/stocks.test.ts` / `worker/handlers/integration.test.ts` のモック層で `fetchWithRetry` を「fetcher を 1 回だけ呼ぶ」passthrough 実装に差し替えた。ハンドラ単体テストでは UPSTREAM_* マッピングに集中し、リトライ／バックオフの挙動は `worker/lib/oembed.test.ts` で担保する分担。
+- `worker/handlers/integration.test.ts` の失敗シナリオを fetch-first 前提に書き換え。旧「oEmbed 取得失敗 → stock は作成されるがメタデータ null」を「oEmbed 取得失敗 → stock は作成されない、502 `UPSTREAM_FAILURE` が返る」へ変更し、DB に該当 `canonical_url` の stock が残らないことを検証。
+
+### Notes
+- ハンドラの公開挙動（HTTP ステータス / `code`）が変わるため MINOR バンプ（0.0.4.1 → 0.0.5.0）。UI（PR-D）側のエラーメッセージ表示更新は別 PR で対応する（ui-spec.md §7.4）。
+
 ## [0.0.4.1] - 2026-06-14
 
 ### Added
