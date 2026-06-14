@@ -280,7 +280,7 @@ src/
 > **設計判断（同期モデル）:** ストック登録は POST /api/stocks のリクエスト内で oEmbed 取得まで完了する同期モデルとする。
 > oEmbed 取得が失敗（指数バックオフ 3 回リトライ後も失敗）した場合は DB ロールバックでストックは作成せず、エラーレスポンスを返す。
 > これにより `pending` / `failed` 状態がそもそも存在しなくなり、ポーリング・再試行 UI も不要になる。
-> 詳細は oembed-spec.md / stock-api-spec.md を参照（**両仕様も同期モデルに更新が必要 — TODO**）。
+> 詳細は oembed-spec.md / stock-api-spec.md を参照（両仕様とも sync モデル + rollback semantics に整合済み、ADR-009 §4-2）。
 
 **バリデーションエラーの表示:**
 - `#url-error` 要素にテキストを設定し `hidden` 属性を除去

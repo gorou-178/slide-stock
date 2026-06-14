@@ -1,0 +1,130 @@
+---
+export const prerender = true;
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+// 最終更新日（静的）— 改定時は手動で更新する
+const lastUpdated = '2026-06-14';
+---
+
+<BaseLayout title="プライバシーポリシー" showNavbar={false}>
+  <article class="legal-page">
+    <header class="legal-header">
+      <h1>プライバシーポリシー</h1>
+      <p class="legal-meta">最終更新日: {lastUpdated}</p>
+    </header>
+
+    <section>
+      <h2>1. はじめに</h2>
+      <p>
+        Slide Stock（以下「本サービス」）は個人開発によるスライドストック管理サービスです。
+        本ポリシーでは、本サービスがどのような情報を取得し、どのように利用・保管するかを説明します。
+      </p>
+    </section>
+
+    <section>
+      <h2>2. 取得する情報</h2>
+      <p>本サービスは以下の情報を Google アカウントによるログイン時に取得します:</p>
+      <ul>
+        <li>Google アカウントの一意識別子（<code>sub</code>）</li>
+        <li>メールアドレス（<code>email</code>）</li>
+        <li>表示名（<code>name</code>）</li>
+      </ul>
+      <p>
+        Google OAuth 2.0（OpenID Connect）の <code>openid</code> / <code>email</code> / <code>profile</code> スコープのみを要求します。
+        Google ドライブ・カレンダー等の他サービスへのアクセスは行いません。
+      </p>
+    </section>
+
+    <section>
+      <h2>3. 取得した情報の利用目的</h2>
+      <ul>
+        <li>ユーザー本人を識別し、登録したスライドストック・メモを正しく紐付けるため</li>
+        <li>セッション Cookie の発行・検証のため</li>
+        <li>サービスの不具合解析（最低限のサーバーログ）のため</li>
+      </ul>
+      <p>取得した情報を上記以外の目的で利用することはありません。広告配信・行動分析は行いません。</p>
+    </section>
+
+    <section>
+      <h2>4. ユーザーが登録するデータ</h2>
+      <p>
+        本サービスにスライド URL を登録すると、以下の情報がプロバイダ（SpeakerDeck / Docswell / Google Slides）から自動取得され、データベースに保存されます:
+      </p>
+      <ul>
+        <li>正規化された URL、プロバイダ識別子</li>
+        <li>スライドのタイトル・著者名（プロバイダの oEmbed / 公開ページから取得）</li>
+        <li>embed URL</li>
+        <li>登録日時・更新日時</li>
+      </ul>
+      <p>あわせて、ユーザーがメモとして入力したテキスト（最大 200 文字）も保存します。</p>
+    </section>
+
+    <section>
+      <h2>5. Cookie の利用</h2>
+      <p>本サービスは以下の Cookie を発行します:</p>
+      <ul>
+        <li>
+          <strong><code>__Host-session</code></strong>: ログイン後のセッション識別に使用する JWT。
+          <code>HttpOnly</code> / <code>Secure</code> / <code>SameSite=Lax</code> 属性で保護され、JavaScript からは参照できません。
+          有効期間は 7 日間（自動延長なし）。
+        </li>
+        <li>
+          <strong><code>__Host-auth_state</code></strong>: ログインフロー中の CSRF 対策トークン。
+          ログイン完了またはエラー時に削除されます。
+        </li>
+      </ul>
+      <p>トラッキング Cookie・第三者 Cookie は使用しません。</p>
+    </section>
+
+    <section>
+      <h2>6. データの保管場所と第三者提供</h2>
+      <p>
+        ユーザーデータは Cloudflare D1（Cloudflare のサーバーレス SQLite）に保管され、Cloudflare Workers / Pages のインフラ上で処理されます。
+        Cloudflare 以外の第三者に対し、ユーザーデータを提供することはありません。
+      </p>
+      <p>
+        ただし、URL 登録時にスライドのメタデータを取得するため、SpeakerDeck・Docswell・Google Slides の公開 API / 公開ページに対して、
+        ユーザーが入力したスライド URL を送信します。これらのプロバイダ側のプライバシーポリシーが別途適用されます。
+      </p>
+    </section>
+
+    <section>
+      <h2>7. データの保持期間と削除</h2>
+      <p>
+        ユーザーが登録したスライドストック・メモは、ユーザー自身が削除操作を行うまで保持されます。
+        本サービスにアカウント削除機能を実装するまでの間、退会・データ削除のご要望は GitHub の Issue またはご連絡でお寄せください。
+      </p>
+    </section>
+
+    <section>
+      <h2>8. セキュリティ</h2>
+      <ul>
+        <li>セッション Cookie には <code>HttpOnly</code> / <code>Secure</code> / <code>SameSite=Lax</code> 属性を設定</li>
+        <li>すべての通信は HTTPS（TLS）で暗号化</li>
+        <li>CSRF 対策として認証フロー中に state パラメータを検証</li>
+        <li>SQL インジェクション対策として prepared statement のみ使用</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>9. お問い合わせ</h2>
+      <p>
+        本ポリシーに関するご質問・データ削除のご要望は
+        <a href="https://github.com/gorou-178/slide-stock/issues" target="_blank" rel="noopener noreferrer">GitHub Issues</a>
+        からお問い合わせください。
+      </p>
+    </section>
+
+    <section>
+      <h2>10. ポリシーの変更</h2>
+      <p>
+        本ポリシーは、機能追加・法令改定・運営方針の変更に伴い改定することがあります。
+        重要な変更がある場合は、本ページの「最終更新日」を更新し、必要に応じてサービス内で告知します。
+      </p>
+    </section>
+
+    <p class="legal-back">
+      <a href="/">&larr; トップに戻る</a>
+    </p>
+  </article>
+</BaseLayout>

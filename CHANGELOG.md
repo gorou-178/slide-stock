@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to a 4-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.0.6.0] - 2026-06-14
+
+### Added
+- T-E 完了: `src/pages/privacy.astro` を新規追加。`ui-spec.md` §4.1 の footer から参照されるプライバシーポリシーページ。Google OIDC で取得する情報（`sub` / `email` / `name`）、`__Host-session` / `__Host-auth_state` Cookie の利用範囲、Cloudflare D1 への保管、第三者提供なし（プロバイダ oEmbed へのスライド URL 送信は明記）、データ保持期間、削除依頼の連絡先（GitHub Issues）、HTTPS / CSRF state / prepared statement 等のセキュリティ対策を 10 セクションで明示。最終更新日 2026-06-14。
+- T-E 完了: `src/pages/terms.astro` を新規追加。`ui-spec.md` §4.1 の footer から参照される利用規約ページ。個人開発・無償・無保証であること、Google アカウント前提のアカウント登録、サービス内容（URL ストック / メモ / 削除）、禁止事項（権利侵害 / 非公開スライドの無断登録 / 過度な負荷 / 脆弱性悪用 / なりすまし / 公序良俗違反）、知的財産の帰属（スライドは原著作者、本サービスのコードは GitHub のライセンスに従う）、免責、サービス終了の事前告知、準拠法（日本法 / 東京地方裁判所第一審）の 10 セクション。最終更新日 2026-06-14。
+- `astro.config.mjs` の `vite.define` で `__APP_VERSION__` 定数を build-time に注入する仕組みを追加。`VERSION` ファイルの内容を `readFileSync` で読み込み、`BaseLayout` の footer で `v{appVersion}` として表示する（ui-spec.md §4.1）。`src/env.d.ts` に `declare const __APP_VERSION__: string` を追記。
+- `public/styles/global.css` に `.legal-page` / `.legal-header` / `.legal-meta` / `.legal-back` のスタイルを追加。max-width 720px、各セクション間に余白、`<code>` を `--color-surface` のチップ風にスタイル。`.site-footer .footer-nav` / `.footer-meta` / `.footer-version` のクラス別スタイルも追加し、nav は flex で中央寄せ、version は mono フォントで表示。
+
+### Changed
+- `src/layouts/BaseLayout.astro` の footer を `ui-spec.md` §4.1 の仕様に整合させた。旧 `<p>&copy; 2025 Slide Stock</p>` を、`<nav class="footer-nav">` に `/privacy` / `/terms` / GitHub の 3 リンク、`<p class="footer-meta">` に動的な著作権年（`new Date().getFullYear()`）と `v{__APP_VERSION__}` を含む構造に置き換え。これで spec の footer 構造と実装が完全に一致する。
+- `docs/ui-spec.md` §5.3.1 の「両仕様も同期モデルに更新が必要 — TODO」のスタール表記を削除し、「両仕様とも sync モデル + rollback semantics に整合済み、ADR-009 §4-2」へ書き換え。ADR-009 シリーズ完了に伴う注記の整合。
+
+### Notes
+- MINOR バンプ（0.0.5.1 → 0.0.6.0）。新規公開ページ 2 つの追加と footer の挙動変更があるため。
+- ローンチ前の法的ブロッカー T-E は完了。残りのブロッカーは T-C / T-D（LP スクリーンショット、LP リライトと合わせて取る予定）。
+
 ## [0.0.5.1] - 2026-06-14
 
 ### Added

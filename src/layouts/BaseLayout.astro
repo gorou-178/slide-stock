@@ -7,6 +7,10 @@ interface Props {
 }
 
 const { title, showNavbar = true } = Astro.props;
+
+// 著作権年（build 時点）+ アプリバージョン（VERSION ファイル）— ui-spec.md §4.1
+const currentYear = new Date().getFullYear();
+const appVersion = __APP_VERSION__;
 ---
 
 <!DOCTYPE html>
@@ -25,8 +29,16 @@ const { title, showNavbar = true } = Astro.props;
   <main>
     <slot />
   </main>
-  <footer>
-    <p>&copy; 2025 Slide Stock</p>
+  <footer class="site-footer">
+    <nav class="footer-nav" aria-label="フッターナビゲーション">
+      <a href="/privacy">プライバシーポリシー</a>
+      <a href="/terms">利用規約</a>
+      <a href="https://github.com/gorou-178/slide-stock" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </nav>
+    <p class="footer-meta">
+      &copy; <span class="current-year">{currentYear}</span> Slide Stock
+      <span class="footer-version" aria-label="バージョン">v{appVersion}</span>
+    </p>
   </footer>
 </body>
 </html>
