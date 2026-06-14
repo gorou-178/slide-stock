@@ -116,6 +116,7 @@ describe("POST /api/stocks", () => {
       expect(fetchSpeakerDeckMetadata).toHaveBeenCalledOnce();
       expect(fetchSpeakerDeckMetadata).toHaveBeenCalledWith(
         "https://speakerdeck.com/newuser/new-slide",
+        expect.any(AbortSignal),
       );
     });
 

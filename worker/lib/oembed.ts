@@ -1,11 +1,14 @@
 /**
  * oEmbed フェッチサービス
- * oembed-spec.md セクション 2-4
+ * oembed-spec.md §2-§7
  */
 
 const MAX_OEMBED_RESPONSE_SIZE = 100 * 1024; // 100 KB
 const MAX_HTML_RESPONSE_SIZE = 500 * 1024; // 500 KB
-const FETCH_TIMEOUT = 10_000; // 10秒
+
+const PER_ATTEMPT_TIMEOUT_MS = 3_000;
+const TOTAL_BUDGET_MS = 12_000;
+const BACKOFFS_MS = [0, 500, 1500];
 
 export interface StockMetadata {
   title: string | null;
@@ -14,7 +17,7 @@ export interface StockMetadata {
   embedUrl: string | null;
 }
 
-/** リトライ不要な恒久的エラー */
+/** リトライ不要な恒久的エラー（404 / 403 / レスポンス形式不正） */
 export class PermanentError extends Error {
   constructor(message: string) {
     super(message);
@@ -22,49 +25,68 @@ export class PermanentError extends Error {
   }
 }
 
+/** リトライ上限到達（5xx / ネットワーク失敗等の一時的エラーが続いた） */
+export class UpstreamFailureError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "UpstreamFailureError";
+  }
+}
+
+/** 合計タイムアウト予算を超過 */
+export class UpstreamTimeoutError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "UpstreamTimeoutError";
+  }
+}
+
 // --- 共通ヘルパー ---
 
-async function fetchWithTimeout(
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithSizeLimit(
   url: string,
   maxSize: number,
+  signal: AbortSignal,
+  init?: RequestInit,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+  const res = await fetch(url, { ...init, signal });
 
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    // レスポンスサイズチェック
-    const contentLength = res.headers.get("Content-Length");
-    if (contentLength && parseInt(contentLength) > maxSize) {
-      throw new PermanentError(
-        `Response too large: ${contentLength} bytes (max ${maxSize})`,
-      );
-    }
-
-    return res;
-  } catch (e) {
-    clearTimeout(timeoutId);
-    throw e;
+  const contentLength = res.headers.get("Content-Length");
+  if (contentLength && parseInt(contentLength) > maxSize) {
+    throw new PermanentError(
+      `Response too large: ${contentLength} bytes (max ${maxSize})`,
+    );
   }
+
+  return res;
 }
 
 // --- SpeakerDeck ---
 
 /**
  * SpeakerDeck oEmbed メタデータ取得
- * oembed-spec.md セクション 2
+ * oembed-spec.md §2
  */
 export async function fetchSpeakerDeckMetadata(
   canonicalUrl: string,
+  signal: AbortSignal,
 ): Promise<StockMetadata> {
   const oembedUrl = `https://speakerdeck.com/oembed.json?url=${encodeURIComponent(canonicalUrl)}`;
-  const res = await fetchWithTimeout(oembedUrl, MAX_OEMBED_RESPONSE_SIZE);
+  const res = await fetchWithSizeLimit(oembedUrl, MAX_OEMBED_RESPONSE_SIZE, signal);
 
-  if (res.status === 404 || res.status === 403) {
+  if (res.status === 404) {
     throw new PermanentError(
-      `SpeakerDeck oEmbed returned ${res.status}: slide not found or private`,
+      `SpeakerDeck oEmbed returned 404: slide not found or private`,
+    );
+  }
+  if (res.status === 403) {
+    throw new PermanentError(
+      `SpeakerDeck oEmbed returned 403: access denied`,
     );
   }
   if (!res.ok) {
@@ -77,7 +99,6 @@ export async function fetchSpeakerDeckMetadata(
     html?: string;
   };
 
-  // embed_url を html の iframe src から抽出
   let embedUrl: string | null = null;
   if (data.html) {
     const match = data.html.match(
@@ -102,17 +123,23 @@ export async function fetchSpeakerDeckMetadata(
 
 /**
  * Docswell oEmbed メタデータ取得
- * oembed-spec.md セクション 3
+ * oembed-spec.md §3
  */
 export async function fetchDocswellMetadata(
   canonicalUrl: string,
+  signal: AbortSignal,
 ): Promise<StockMetadata> {
   const oembedUrl = `https://www.docswell.com/service/oembed?url=${encodeURIComponent(canonicalUrl)}&format=json`;
-  const res = await fetchWithTimeout(oembedUrl, MAX_OEMBED_RESPONSE_SIZE);
+  const res = await fetchWithSizeLimit(oembedUrl, MAX_OEMBED_RESPONSE_SIZE, signal);
 
-  if (res.status === 404 || res.status === 403) {
+  if (res.status === 404) {
     throw new PermanentError(
-      `Docswell oEmbed returned ${res.status}: slide not found or private`,
+      `Docswell oEmbed returned 404: slide not found or private`,
+    );
+  }
+  if (res.status === 403) {
+    throw new PermanentError(
+      `Docswell oEmbed returned 403: access denied`,
     );
   }
   if (!res.ok) {
@@ -130,7 +157,6 @@ export async function fetchDocswellMetadata(
     throw new PermanentError("Docswell oEmbed response missing url field");
   }
 
-  // embed URL のドメインバリデーション
   let embedUrl: string | null = rawEmbedUrl;
   try {
     const parsed = new URL(rawEmbedUrl);
@@ -161,29 +187,50 @@ export async function fetchDocswellMetadata(
 // --- Google Slides ---
 
 /**
- * Google Slides メタデータ構築
- * oembed-spec.md セクション 4
+ * Google Slides メタデータ取得（hard failure / ADR-009 §4-5）
+ * oembed-spec.md §4
+ *
+ * title 取得が成功した場合のみ stock 作成対象とする。失敗時は呼び出し元の
+ * リトライ／エラー処理に委ねるため、PermanentError か一般 Error を throw する。
+ * embed URL は canonical URL から機械的に構築する（外部リクエスト不要）。
  */
 export async function fetchGoogleSlidesMetadata(
   canonicalUrl: string,
+  signal: AbortSignal,
 ): Promise<StockMetadata> {
-  // embed URL は機械的に構築（常に成功）
   const embedUrl = `${canonicalUrl}/embed`;
 
-  // タイトル取得を試行（失敗しても stock 作成は続行）
-  let title: string | null = null;
-  try {
-    const res = await fetchWithTimeout(canonicalUrl, MAX_HTML_RESPONSE_SIZE);
-    if (res.ok) {
-      const html = await res.text();
-      const match = html.match(/<title>(.+?)<\/title>/);
-      if (match) {
-        title =
-          match[1].replace(/ - Google (スライド|Slides)$/, "").trim() || null;
-      }
-    }
-  } catch (err) {
-    console.warn(JSON.stringify({ action: "google_slides_title_fetch_failed", canonicalUrl, error: String(err) }));
+  const res = await fetchWithSizeLimit(canonicalUrl, MAX_HTML_RESPONSE_SIZE, signal, {
+    headers: { "Accept-Language": "ja" },
+    redirect: "follow",
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new PermanentError(
+      `Google Slides returned ${res.status}: slide private or access denied`,
+    );
+  }
+  if (res.status === 404) {
+    throw new PermanentError(
+      "Google Slides returned 404: presentation not found",
+    );
+  }
+  if (!res.ok) {
+    throw new Error(`Google Slides returned ${res.status}`);
+  }
+
+  const html = await res.text();
+  const match = html.match(/<title>(.+?)<\/title>/);
+  if (!match) {
+    throw new PermanentError("Google Slides response missing <title> tag");
+  }
+
+  const title = match[1]
+    .replace(/ - Google (スライド|Slides)$/, "")
+    .trim();
+
+  if (!title) {
+    throw new PermanentError("Google Slides title is empty after suffix strip");
   }
 
   return {
@@ -192,4 +239,47 @@ export async function fetchGoogleSlidesMetadata(
     thumbnailUrl: null,
     embedUrl,
   };
+}
+
+// --- 同期内リトライ（指数バックオフ） ---
+
+/**
+ * 同期内リトライ実行
+ * oembed-spec.md §6
+ *
+ * 試行 3 回（バックオフ 0ms → 500ms → 1500ms）、1 試行 3 秒タイムアウト、
+ * 合計予算 12 秒。PermanentError は即 throw（リトライしない）、他の Error は
+ * リトライ対象。全試行失敗で UpstreamFailureError、予算超過で UpstreamTimeoutError。
+ */
+export async function fetchWithRetry(
+  fetcher: (signal: AbortSignal) => Promise<StockMetadata>,
+  totalBudgetMs: number = TOTAL_BUDGET_MS,
+): Promise<StockMetadata> {
+  const totalDeadline = AbortSignal.timeout(totalBudgetMs);
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt < BACKOFFS_MS.length; attempt++) {
+    if (attempt > 0) {
+      await sleep(BACKOFFS_MS[attempt]);
+    }
+    if (totalDeadline.aborted) {
+      throw new UpstreamTimeoutError("total budget exhausted", {
+        cause: lastError,
+      });
+    }
+    try {
+      const perAttemptSignal = AbortSignal.any([
+        AbortSignal.timeout(PER_ATTEMPT_TIMEOUT_MS),
+        totalDeadline,
+      ]);
+      return await fetcher(perAttemptSignal);
+    } catch (err) {
+      if (err instanceof PermanentError) throw err;
+      if (totalDeadline.aborted) {
+        throw new UpstreamTimeoutError("total budget exhausted", { cause: err });
+      }
+      lastError = err;
+    }
+  }
+  throw new UpstreamFailureError("max retries exhausted", { cause: lastError });
 }

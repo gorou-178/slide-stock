@@ -121,7 +121,11 @@ export async function handleCreateStock(
   };
 
   try {
-    metadata = await fetchMetadataByProvider(provider, canonicalUrl);
+    metadata = await fetchMetadataByProvider(
+      provider,
+      canonicalUrl,
+      AbortSignal.timeout(12_000),
+    );
     await env.DB.prepare(
       `UPDATE stocks SET title = ?, author_name = ?, embed_url = ?, thumbnail_url = ?, updated_at = ?
        WHERE id = ?`,
@@ -159,14 +163,15 @@ export async function handleCreateStock(
 async function fetchMetadataByProvider(
   provider: string,
   canonicalUrl: string,
+  signal: AbortSignal,
 ): Promise<StockMetadata> {
   switch (provider) {
     case "speakerdeck":
-      return fetchSpeakerDeckMetadata(canonicalUrl);
+      return fetchSpeakerDeckMetadata(canonicalUrl, signal);
     case "docswell":
-      return fetchDocswellMetadata(canonicalUrl);
+      return fetchDocswellMetadata(canonicalUrl, signal);
     case "google_slides":
-      return fetchGoogleSlidesMetadata(canonicalUrl);
+      return fetchGoogleSlidesMetadata(canonicalUrl, signal);
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }
