@@ -26,6 +26,7 @@ import StockList from '../components/StockList.astro';
     docswell: 'Docswell',
     google_slides: 'Google Slides',
   };
+  const EMPTY_THUMBNAIL_URL = '/images/thumbnail-empty.svg';
 
   function truncate(text: string, max: number): string {
     if (text.length <= max) return text;
@@ -36,6 +37,31 @@ import StockList from '../components/StockList.astro';
     const article = document.createElement('article');
     article.className = 'stock-card';
     article.dataset.stockId = stock.id;
+
+    const thumbnailLink = document.createElement('a');
+    thumbnailLink.href = `/stocks/${stock.id}`;
+    thumbnailLink.className = 'stock-card-thumbnail';
+    thumbnailLink.setAttribute('aria-hidden', 'true');
+    thumbnailLink.tabIndex = -1;
+
+    const thumbnail = document.createElement('img');
+    thumbnail.className = 'stock-card-thumbnail-img';
+    thumbnail.src = stock.thumbnail_url ?? EMPTY_THUMBNAIL_URL;
+    thumbnail.alt = '';
+    thumbnail.loading = 'lazy';
+    thumbnail.decoding = 'async';
+    thumbnail.width = 320;
+    thumbnail.height = 180;
+    thumbnail.addEventListener('error', () => {
+      if (thumbnail.src.endsWith(EMPTY_THUMBNAIL_URL)) return;
+      thumbnail.src = EMPTY_THUMBNAIL_URL;
+    });
+
+    thumbnailLink.appendChild(thumbnail);
+    article.appendChild(thumbnailLink);
+
+    const body = document.createElement('div');
+    body.className = 'stock-card-body';
 
     const header = document.createElement('div');
     header.className = 'stock-card-header';
@@ -54,20 +80,20 @@ import StockList from '../components/StockList.astro';
 
     header.appendChild(titleEl);
     header.appendChild(badge);
-    article.appendChild(header);
+    body.appendChild(header);
 
     if (stock.author_name) {
       const meta = document.createElement('div');
       meta.className = 'stock-card-meta';
       meta.textContent = stock.author_name;
-      article.appendChild(meta);
+      body.appendChild(meta);
     }
 
     if (stock.memo_text) {
       const memo = document.createElement('p');
       memo.className = 'stock-card-memo';
       memo.textContent = truncate(stock.memo_text, 100);
-      article.appendChild(memo);
+      body.appendChild(memo);
     }
 
     const actions = document.createElement('div');
@@ -87,7 +113,8 @@ import StockList from '../components/StockList.astro';
     extLink.innerHTML = '元のスライドを開く <span aria-hidden="true">↗</span>';
     actions.appendChild(extLink);
 
-    article.appendChild(actions);
+    body.appendChild(actions);
+    article.appendChild(body);
 
     return article;
   }

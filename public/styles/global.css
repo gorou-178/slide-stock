@@ -338,10 +338,13 @@ footer {
 
 /* --- Stock Card --- */
 .stock-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-md);
   background: var(--color-background);
   border: 1px solid var(--color-border);
   border-radius: var(--border-radius);
-  padding: var(--space-lg);
+  padding: var(--space-md);
   transition: box-shadow 0.2s;
 }
 
@@ -351,6 +354,31 @@ footer {
 
 .stock-card + .stock-card {
   margin-top: var(--space-md);
+}
+
+.stock-card-thumbnail {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-surface);
+}
+
+.stock-card-thumbnail:hover {
+  text-decoration: none;
+}
+
+.stock-card-thumbnail-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.stock-card-body {
+  min-width: 0;
 }
 
 /* 長い日本語タイトル + バッジが 1 行に収まらないケースをモバイルで安全に扱うため、
@@ -400,6 +428,15 @@ footer {
 .stock-card-actions {
   display: flex;
   gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+@media (min-width: 720px) {
+  .stock-card {
+    grid-template-columns: 180px minmax(0, 1fr);
+    align-items: start;
+    padding: var(--space-lg);
+  }
 }
 
 /* --- Badge --- */

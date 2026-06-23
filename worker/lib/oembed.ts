@@ -17,6 +17,8 @@ export interface StockMetadata {
   embedUrl: string | null;
 }
 
+type Provider = "speakerdeck" | "docswell" | "google_slides";
+
 /**
  * リトライ不要な恒久的エラーの基底クラス。
  * 具体的なケース（404 / 401・403 / レスポンス形式不正）は下のサブクラスで区別する。
@@ -95,6 +97,103 @@ async function fetchWithSizeLimit(
   return res;
 }
 
+function resolveTrustedThumbnailUrl(
+  rawUrl: string | undefined,
+  baseUrl: string,
+  provider: Provider,
+): string | null {
+  if (!rawUrl?.trim()) return null;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(decodeHtmlEntities(rawUrl.trim()), baseUrl);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== "https:") return null;
+
+  const hostname = parsed.hostname.toLowerCase();
+  const allowed = {
+    speakerdeck: ["speakerdeck.com"],
+    docswell: ["docswell.com"],
+    google_slides: ["docs.google.com", "googleusercontent.com"],
+  } satisfies Record<Provider, string[]>;
+
+  const isAllowed = allowed[provider].some(
+    (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+  );
+
+  return isAllowed ? parsed.toString() : null;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function extractMetaContent(html: string, key: string, keyAttribute: "property" | "name"): string | null {
+  const patterns = [
+    new RegExp(
+      `<meta\\s+[^>]*${keyAttribute}=["']${escapeRegExp(key)}["'][^>]*content=["']([^"']+)["'][^>]*>`,
+      "i",
+    ),
+    new RegExp(
+      `<meta\\s+[^>]*content=["']([^"']+)["'][^>]*${keyAttribute}=["']${escapeRegExp(key)}["'][^>]*>`,
+      "i",
+    ),
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  return null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractOgpThumbnailUrl(
+  html: string,
+  canonicalUrl: string,
+  provider: Provider,
+): string | null {
+  const candidates = [
+    extractMetaContent(html, "og:image", "property"),
+    extractMetaContent(html, "twitter:image", "name"),
+    extractMetaContent(html, "og:image:url", "property"),
+  ];
+
+  for (const candidate of candidates) {
+    const trusted = resolveTrustedThumbnailUrl(candidate ?? undefined, canonicalUrl, provider);
+    if (trusted) return trusted;
+  }
+
+  return null;
+}
+
+export async function fetchOgpThumbnailUrl(
+  canonicalUrl: string,
+  provider: Provider,
+  signal: AbortSignal,
+): Promise<string | null> {
+  const res = await fetchWithSizeLimit(canonicalUrl, MAX_HTML_RESPONSE_SIZE, signal, {
+    redirect: "follow",
+  });
+
+  if (!res.ok) return null;
+
+  const html = await res.text();
+  return extractOgpThumbnailUrl(html, canonicalUrl, provider);
+}
+
 // --- SpeakerDeck ---
 
 /**
@@ -125,6 +224,7 @@ export async function fetchSpeakerDeckMetadata(
   const data = (await res.json()) as {
     title?: string;
     author_name?: string;
+    thumbnail_url?: string;
     html?: string;
   };
 
@@ -145,7 +245,11 @@ export async function fetchSpeakerDeckMetadata(
   return {
     title: data.title ?? null,
     authorName: data.author_name ?? null,
-    thumbnailUrl: null,
+    thumbnailUrl: resolveTrustedThumbnailUrl(
+      data.thumbnail_url,
+      canonicalUrl,
+      "speakerdeck",
+    ),
     embedUrl,
   };
 }
@@ -180,6 +284,7 @@ export async function fetchDocswellMetadata(
   const data = (await res.json()) as {
     title?: string;
     author_name?: string;
+    thumbnail_url?: string;
     url?: string;
   };
 
@@ -212,7 +317,11 @@ export async function fetchDocswellMetadata(
   return {
     title: data.title ?? null,
     authorName: data.author_name ?? null,
-    thumbnailUrl: null,
+    thumbnailUrl: resolveTrustedThumbnailUrl(
+      data.thumbnail_url,
+      canonicalUrl,
+      "docswell",
+    ),
     embedUrl,
   };
 }
@@ -273,7 +382,7 @@ export async function fetchGoogleSlidesMetadata(
   return {
     title,
     authorName: null,
-    thumbnailUrl: null,
+    thumbnailUrl: extractOgpThumbnailUrl(html, canonicalUrl, "google_slides"),
     embedUrl,
   };
 }

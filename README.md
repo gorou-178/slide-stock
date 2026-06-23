@@ -57,6 +57,15 @@ npm run db:seed
 
 # 全データ削除（空の状態にリセット）
 npm run db:reset
+
+# 既存ストックのサムネイル補完（dry-run）
+npm run thumbnails:backfill
+
+# 既存ストックのサムネイル補完を実行
+npm run thumbnails:backfill -- --apply
+
+# 本番 D1 の既存ストックを補完
+npm run thumbnails:backfill -- --remote --apply
 ```
 
 ### テスト
