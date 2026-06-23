@@ -24,7 +24,7 @@ erDiagram
         TEXT provider "speakerdeck / docswell / google_slides"
         TEXT title "nullable - Google Slides で HTML 取得失敗時のみ null"
         TEXT author_name "nullable - Google Slides は常に null"
-        TEXT thumbnail_url "nullable - MVP は常に null"
+        TEXT thumbnail_url "nullable - oEmbed/OGP thumbnail URL"
         TEXT embed_url "nullable - 同期モデルでは原則 null にならない"
         TEXT created_at
         TEXT updated_at
@@ -69,7 +69,7 @@ erDiagram
 | provider | TEXT | NOT NULL | `speakerdeck` / `docswell` / `google_slides` |
 | title | TEXT | nullable | スライドタイトル（Google Slides の HTML 取得失敗時のみ null） |
 | author_name | TEXT | nullable | 著者名（Google Slides は仕様上常に null） |
-| thumbnail_url | TEXT | nullable | サムネイルURL（MVP では常に null） |
+| thumbnail_url | TEXT | nullable | サムネイルURL。oEmbed の `thumbnail_url` を優先し、なければ公開ページ HTML の `og:image` / `twitter:image` から取得。取得不可なら `null` |
 | embed_url | TEXT | nullable | 埋め込み用URL（同期モデル + rollback semantics 下では原則 null にならない） |
 | created_at | TEXT | NOT NULL | 作成日時 (ISO 8601) |
 | updated_at | TEXT | NOT NULL | 更新日時 (ISO 8601) |
@@ -110,7 +110,7 @@ stateDiagram-v2
     Exists --> [*] : DELETE /api/stocks/:id
 ```
 
-stock は INSERT 後、ユーザーが DELETE するまで残る。同期モデル + rollback semantics（ADR-009 §4-2）と Google Slides 軟性失敗の撤回（ADR-009 §4-5）により、INSERT が成功した stock は `title` / `embed_url` ともに充足が保証される（`author_name` のみ Google Slides では仕様上 `null`、`thumbnail_url` は MVP 全体で常に `null`）。
+stock は INSERT 後、ユーザーが DELETE するまで残る。同期モデル + rollback semantics（ADR-009 §4-2）と Google Slides 軟性失敗の撤回（ADR-009 §4-5）により、INSERT が成功した stock は `title` / `embed_url` ともに充足が保証される（`author_name` のみ Google Slides では仕様上 `null`、`thumbnail_url` は取得できない場合 `null`）。
 
 将来 Cloudflare Queues 等で非同期化したくなった場合は、その時点で migration を 1 本足して `status` カラムを再導入する（YAGNI、ADR-009 §4-3）。
 

@@ -58,6 +58,7 @@ vi.mock("../lib/oembed", async (importOriginal) => {
       thumbnailUrl: null,
       embedUrl: "https://docs.google.com/presentation/d/mock123/embed",
     }),
+    fetchOgpThumbnailUrl: vi.fn().mockResolvedValue(null),
     fetchWithRetry: vi
       .fn()
       .mockImplementation(
@@ -74,6 +75,7 @@ import {
   fetchSpeakerDeckMetadata,
   fetchDocswellMetadata,
   fetchGoogleSlidesMetadata,
+  fetchOgpThumbnailUrl,
   UpstreamNotFoundError,
   UpstreamForbiddenError,
   UpstreamInvalidResponseError,
@@ -148,6 +150,28 @@ describe("POST /api/stocks", () => {
       expect(body.provider).toBe("docswell");
       expect(body.status).toBeUndefined();
       expect(body.title).toBe("Mock Docswell Slide");
+    });
+
+    it("P2b: oEmbed に thumbnail がない場合は OGP サムネイルを保存する", async () => {
+      vi.mocked(fetchOgpThumbnailUrl).mockResolvedValueOnce(
+        "https://files.speakerdeck.com/presentations/thumb.jpg",
+      );
+
+      const request = createJsonRequest("/api/stocks", "POST", {
+        url: "https://speakerdeck.com/newuser/thumbnail-fallback",
+      });
+      const res = await handleCreateStock(request, stockEnv(), auth(USER1));
+
+      expect(res.status).toBe(201);
+      const body = await parseJsonResponse<Record<string, unknown>>(res);
+      expect(body.thumbnail_url).toBe(
+        "https://files.speakerdeck.com/presentations/thumb.jpg",
+      );
+      expect(fetchOgpThumbnailUrl).toHaveBeenCalledWith(
+        "https://speakerdeck.com/newuser/thumbnail-fallback",
+        "speakerdeck",
+        expect.any(AbortSignal),
+      );
     });
 
     it("P3: Google Slides URL を登録できる（201）", async () => {

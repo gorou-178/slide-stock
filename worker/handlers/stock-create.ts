@@ -14,6 +14,7 @@ import {
   fetchSpeakerDeckMetadata,
   fetchDocswellMetadata,
   fetchGoogleSlidesMetadata,
+  fetchOgpThumbnailUrl,
   fetchWithRetry,
   PermanentError,
   UpstreamNotFoundError,
@@ -37,6 +38,8 @@ const PROVIDER_ERROR_MAP: Record<
   INVALID_FORMAT: { status: 400, code: "INVALID_FORMAT" },
   UNSUPPORTED_URL_TYPE: { status: 400, code: "UNSUPPORTED_URL_TYPE" },
 };
+
+const THUMBNAIL_FETCH_TIMEOUT_MS = 2_000;
 
 export async function handleCreateStock(
   request: Request,
@@ -107,6 +110,13 @@ export async function handleCreateStock(
     );
   } catch (err) {
     return mapUpstreamError(err, provider, canonicalUrl);
+  }
+
+  if (!metadata.thumbnailUrl && provider !== "google_slides") {
+    metadata = {
+      ...metadata,
+      thumbnailUrl: await fetchThumbnailBestEffort(provider, canonicalUrl),
+    };
   }
 
   // --- INSERT（メタデータ充足済み、1 回で書き込む / spec §3.6） ---
@@ -182,6 +192,37 @@ export async function handleCreateStock(
     },
     { status: 201 },
   );
+}
+
+async function fetchThumbnailBestEffort(
+  provider: string,
+  canonicalUrl: string,
+): Promise<string | null> {
+  if (
+    provider !== "speakerdeck" &&
+    provider !== "docswell"
+  ) {
+    return null;
+  }
+
+  try {
+    return await fetchOgpThumbnailUrl(
+      canonicalUrl,
+      provider,
+      AbortSignal.timeout(THUMBNAIL_FETCH_TIMEOUT_MS),
+    );
+  } catch (err) {
+    console.warn(
+      JSON.stringify({
+        action: "thumbnail_fetch_failed",
+        provider,
+        canonicalUrl,
+        errorName: err instanceof Error ? err.name : "unknown",
+        error: String(err),
+      }),
+    );
+    return null;
+  }
 }
 
 /** プロバイダに応じたメタデータ取得関数を呼び出す（spec §5.2） */

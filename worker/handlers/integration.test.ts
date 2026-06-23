@@ -39,6 +39,7 @@ vi.mock("../lib/oembed", async (importOriginal) => {
     fetchSpeakerDeckMetadata: vi.fn(),
     fetchDocswellMetadata: vi.fn(),
     fetchGoogleSlidesMetadata: vi.fn(),
+    fetchOgpThumbnailUrl: vi.fn().mockResolvedValue(null),
     fetchWithRetry: vi
       .fn()
       .mockImplementation(

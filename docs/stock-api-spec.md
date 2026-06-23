@@ -208,7 +208,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 - `original_url`: リクエストの `url`（ユーザー入力そのまま）
 - `canonical_url`: `detectProvider` が返した正規化 URL
 - `provider`: `detectProvider` が返したプロバイダ識別子
-- `title` / `author_name` / `thumbnail_url` / `embed_url`: §3.5 で取得したメタデータ（取れなかったフィールドは `null`、ただし `embed_url` は SpeakerDeck / Docswell では必ず取れる、Google Slides では機械的構築で必ず取れる）
+- `title` / `author_name` / `thumbnail_url` / `embed_url`: §3.5 で取得したメタデータ（`thumbnail_url` は oEmbed の `thumbnail_url` を優先し、なければ OGP 画像を best-effort 取得。取得不可なら `null`。`embed_url` は SpeakerDeck / Docswell では必ず取れる、Google Slides では機械的構築で必ず取れる）
 - `created_at`, `updated_at`: 現在時刻（ISO 8601）
 
 #### INSERT エラーの扱い
@@ -252,7 +252,7 @@ try {
 }
 ```
 
-> **注意:** 同期モデルでは登録時点で oEmbed 取得が完了しているため、`title` / `author_name` / `embed_url` は揃った状態で返る（Google Slides の `author_name` は仕様上 `null`、`thumbnail_url` は MVP では常に `null`）。レスポンスに `status` フィールドは含まれない（ADR-009 §4-3 で廃止）。
+> **注意:** 同期モデルでは登録時点で oEmbed 取得が完了しているため、`title` / `author_name` / `embed_url` は揃った状態で返る（Google Slides の `author_name` は仕様上 `null`、`thumbnail_url` は取得できない場合 `null`）。レスポンスに `status` フィールドは含まれない（ADR-009 §4-3 で廃止）。
 
 ### 3.8 エラーレスポンス例
 
@@ -627,7 +627,7 @@ interface StockResponse {
   provider: Provider;            // プロバイダ識別子
   title: string | null;          // スライドタイトル（Google Slides で HTML 取得失敗時のみ null）
   author_name: string | null;    // 著者名（Google Slides は仕様上常に null）
-  thumbnail_url: string | null;  // サムネイル URL（MVP では常に null）
+  thumbnail_url: string | null;  // サムネイル URL（取得不可なら null）
   embed_url: string | null;      // 埋め込み URL（同期モデルでは原則 null にならない）
   memo_text: string | null;      // メモ本文（未作成時は null）
   created_at: string;            // 作成日時（ISO 8601）

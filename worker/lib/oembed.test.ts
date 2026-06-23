@@ -3,6 +3,7 @@ import {
   fetchSpeakerDeckMetadata,
   fetchDocswellMetadata,
   fetchGoogleSlidesMetadata,
+  fetchOgpThumbnailUrl,
   fetchWithRetry,
   PermanentError,
   UpstreamFailureError,
@@ -65,6 +66,26 @@ describe("fetchSpeakerDeckMetadata", () => {
       "https://speakerdeck.com/player/31f86a9069ae0132dede22511952b5a3",
     );
     expect(result.thumbnailUrl).toBeNull();
+  });
+
+  it("oEmbed thumbnail_url があればサムネイルとして使う", async () => {
+    mockFetch(
+      new Response(
+        JSON.stringify({
+          type: "rich",
+          title: "Atom",
+          author_name: "John Nunemaker",
+          thumbnail_url: "https://files.speakerdeck.com/presentations/thumb.jpg",
+          html: '<iframe src="https://speakerdeck.com/player/31f86a9069ae0132dede22511952b5a3" width="710" height="399"></iframe>',
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const result = await fetchSpeakerDeckMetadata(CANONICAL, newSignal());
+    expect(result.thumbnailUrl).toBe(
+      "https://files.speakerdeck.com/presentations/thumb.jpg",
+    );
   });
 
   it("404 → PermanentError", async () => {
@@ -150,6 +171,24 @@ describe("fetchDocswellMetadata", () => {
     expect(result.thumbnailUrl).toBeNull();
   });
 
+  it("oEmbed thumbnail_url があればサムネイルとして使う", async () => {
+    mockFetch(
+      new Response(
+        JSON.stringify({
+          type: "rich",
+          title: "Windows Server 2025 新機能おさらい",
+          author_name: "Kazuki Takai",
+          thumbnail_url: "https://www.docswell.com/images/thumb.jpg",
+          url: "https://www.docswell.com/slide/59VDWM/embed",
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const result = await fetchDocswellMetadata(CANONICAL, newSignal());
+    expect(result.thumbnailUrl).toBe("https://www.docswell.com/images/thumb.jpg");
+  });
+
   it("404 → PermanentError", async () => {
     mockFetch(
       new Response(
@@ -202,6 +241,18 @@ describe("fetchGoogleSlidesMetadata", () => {
     expect(result.title).toBe("My Presentation");
     expect(result.authorName).toBeNull();
     expect(result.thumbnailUrl).toBeNull();
+  });
+
+  it("OGP の og:image をサムネイルとして取得する", async () => {
+    mockFetch(
+      new Response(
+        '<html><head><title>My Presentation - Google スライド</title><meta property="og:image" content="https://lh3.googleusercontent.com/thumb"></head></html>',
+        { status: 200 },
+      ),
+    );
+
+    const result = await fetchGoogleSlidesMetadata(CANONICAL, newSignal());
+    expect(result.thumbnailUrl).toBe("https://lh3.googleusercontent.com/thumb");
   });
 
   it("英語タイトルの Google Slides サフィックスも除去する", async () => {
@@ -281,6 +332,78 @@ describe("fetchGoogleSlidesMetadata", () => {
     const headers = init.headers as Record<string, string>;
     expect(headers["Accept-Language"]).toBe("ja");
     expect(init.redirect).toBe("follow");
+  });
+});
+
+// ============================================================
+// OGP thumbnail fallback
+// ============================================================
+describe("fetchOgpThumbnailUrl", () => {
+  const CANONICAL = "https://speakerdeck.com/jnunemaker/atom";
+
+  it("og:image を抽出する", async () => {
+    mockFetch(
+      new Response(
+        '<html><head><meta property="og:image" content="https://speakerdeck.com/images/thumb.jpg"></head></html>',
+        { status: 200 },
+      ),
+    );
+
+    await expect(
+      fetchOgpThumbnailUrl(CANONICAL, "speakerdeck", newSignal()),
+    ).resolves.toBe("https://speakerdeck.com/images/thumb.jpg");
+  });
+
+  it("og:image がなければ twitter:image にフォールバックする", async () => {
+    mockFetch(
+      new Response(
+        '<html><head><meta name="twitter:image" content="https://speakerdeck.com/images/twitter-thumb.jpg"></head></html>',
+        { status: 200 },
+      ),
+    );
+
+    await expect(
+      fetchOgpThumbnailUrl(CANONICAL, "speakerdeck", newSignal()),
+    ).resolves.toBe("https://speakerdeck.com/images/twitter-thumb.jpg");
+  });
+
+  it("相対 URL を canonical URL 基準で絶対 URL にする", async () => {
+    mockFetch(
+      new Response(
+        '<html><head><meta property="og:image" content="/images/thumb.jpg"></head></html>',
+        { status: 200 },
+      ),
+    );
+
+    await expect(
+      fetchOgpThumbnailUrl(CANONICAL, "speakerdeck", newSignal()),
+    ).resolves.toBe("https://speakerdeck.com/images/thumb.jpg");
+  });
+
+  it("http URL は保存しない", async () => {
+    mockFetch(
+      new Response(
+        '<html><head><meta property="og:image" content="http://speakerdeck.com/images/thumb.jpg"></head></html>',
+        { status: 200 },
+      ),
+    );
+
+    await expect(
+      fetchOgpThumbnailUrl(CANONICAL, "speakerdeck", newSignal()),
+    ).resolves.toBeNull();
+  });
+
+  it("プロバイダ外の URL は保存しない", async () => {
+    mockFetch(
+      new Response(
+        '<html><head><meta property="og:image" content="https://example.com/thumb.jpg"></head></html>',
+        { status: 200 },
+      ),
+    );
+
+    await expect(
+      fetchOgpThumbnailUrl(CANONICAL, "speakerdeck", newSignal()),
+    ).resolves.toBeNull();
   });
 });
 
