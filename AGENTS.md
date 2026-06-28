@@ -70,7 +70,7 @@ worker/                 # Cloudflare Workers API
   index.ts              #   メインルーター
 migrations/             # D1 SQL マイグレーション
 e2e/                    # Playwright E2E テスト
-docs/                   # 仕様書 (auth-spec, provider-spec, oembed-spec 等)
+docs/                   # 仕様書 (frontend-spec, backend-spec, architecture-spec, data-model-spec, workflow)
 tasks/                  # タスク管理 (TASKS.md = SSOT)
 public/                 # 静的ファイル (_headers, _redirects)
 ```
@@ -124,7 +124,8 @@ export default function(...) { ... }
 ## References
 
 - プロダクト仕様: [CLAUDE.md](CLAUDE.md)
-- アーキテクチャ: [docs/architecture.md](docs/architecture.md)
-- データモデル: [docs/database.md](docs/database.md)
-- タスク運用: [docs/task-workflow.md](docs/task-workflow.md)
-- 各機能仕様: `docs/` 配下 (`auth-spec.md`, `provider-spec.md`, `oembed-spec.md`, `stock-api-spec.md`, `memo-api-spec.md`, `ui-spec.md`)
+- フロントエンド: [docs/frontend-spec.md](docs/frontend-spec.md)
+- バックエンド: [docs/backend-spec.md](docs/backend-spec.md)
+- アーキテクチャ: [docs/architecture-spec.md](docs/architecture-spec.md)
+- データモデル: [docs/data-model-spec.md](docs/data-model-spec.md)
+- 開発ワークフロー: [docs/workflow.md](docs/workflow.md)
