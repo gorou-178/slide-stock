@@ -6,10 +6,11 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: "html",
+  reporter: process.env.CI ? "github" : "line",
   outputDir: "./e2e/test-results",
   use: {
-    baseURL: "http://localhost:4321",
+    baseURL: "https://localhost:4321",
+    ignoreHTTPSErrors: true,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -21,7 +22,8 @@ export default defineConfig({
   ],
   webServer: {
     command: "npm run dev",
-    url: "http://localhost:4321",
+    url: "https://localhost:4321",
+    ignoreHTTPSErrors: true,
     reuseExistingServer: !process.env.CI,
   },
 });

@@ -68,7 +68,7 @@
 
 ## タスク運用
 
-詳細は [docs/task-workflow.md](docs/task-workflow.md) を参照。
+詳細は [docs/workflow.md](docs/workflow.md) を参照。
 
 - `tasks/TASKS.md` をSSOTとし、PM/QA/DEV の3ロールが並列にタスクを実行する
 - **自律モード**: `./scripts/run-agents-tmux.sh` でtmux常駐起動

@@ -11,7 +11,7 @@ Accepted（2026-05-02）
 
 2026-05-02、優先タスク監査の中で **spec と実装が大きく乖離している**ことが発覚した:
 
-| 項目 | spec（`docs/oembed-spec.md` v0.0.3.1 / `docs/stock-api-spec.md` v0.0.3.1） | 実装（`worker/handlers/stock-create.ts` / `worker/lib/oembed.ts`、ADR-004 + migration 0003 ベース） |
+| 項目 | spec（`docs/backend-spec.md` 旧 oembed-spec v0.0.3.1 / 旧 stock-api-spec v0.0.3.1） | 実装（`worker/handlers/stock-create.ts` / `worker/lib/oembed.ts`、ADR-004 + migration 0003 ベース） |
 |------|---|---|
 | 取得タイミング | INSERT **前** に oEmbed 取得（fetch-first） | INSERT **後** に oEmbed 取得（optimistic insert） |
 | 取得失敗時の API レスポンス | 400 / 502 / 504 + DB ロールバック相当（INSERT しない） | 201 + メタデータ null の stock を残す |
@@ -116,7 +116,7 @@ Google Slides も SpeakerDeck / Docswell と同じく、メタデータ取得の
 
 #### 受け入れるトレードオフ
 
-- 公開だが JavaScript レンダリング後にしか `<title>` が出ないプレゼンテーションは MVP では取り込めない（502 `UPSTREAM_INVALID_RESPONSE` が返る）。代替: ブラウザレンダリング機能の導入は MVP のコスト方針（architecture.md）に反するため見送る。ユーザーは Google スライド側で公開設定 + タイトル明記を確認する運用とする
+- 公開だが JavaScript レンダリング後にしか `<title>` が出ないプレゼンテーションは MVP では取り込めない（502 `UPSTREAM_INVALID_RESPONSE` が返る）。代替: ブラウザレンダリング機能の導入は MVP のコスト方針（architecture-spec.md）に反するため見送る。ユーザーは Google スライド側で公開設定 + タイトル明記を確認する運用とする
 - 一時的に Google ドメインに到達できない期間は Google Slides の登録ができなくなる。既存の `UPSTREAM_FAILURE` で表示する
 
 ### 不採用の選択肢
@@ -149,12 +149,12 @@ Google Slides も SpeakerDeck / Docswell と同じく、メタデータ取得の
 
 | # | スコープ | 依存 | 主な対象 |
 |---|---------|------|---------|
-| **PR-A（本 PR）** | ADR 整備 + spec の status 廃止 / 異常系明文化 | — | `docs/adr/004-*` Superseded、`docs/adr/009-*` 新規、`docs/oembed-spec.md` / `docs/stock-api-spec.md` / `docs/database.md` / `docs/ui-spec.md` から `status` 関連を削除、§3.4 / §3.5 / §3.6 に並列レース・D1 失敗の挙動追記、`CLAUDE.md` に SSOT 原則 |
+| **PR-A（本 PR）** | ADR 整備 + spec の status 廃止 / 異常系明文化 | — | `docs/adr/004-*` Superseded、`docs/adr/009-*` 新規、`docs/backend-spec.md`（旧 oembed-spec / stock-api-spec）/ `docs/data-model-spec.md`（旧 database）/ `docs/frontend-spec.md`（旧 ui-spec）から `status` 関連を削除、§3.4 / §3.5 / §3.6 に並列レース・D1 失敗の挙動追記、`CLAUDE.md` に SSOT 原則 |
 | PR-B | oembed.ts のリトライ + 3 秒タイムアウト | A | `worker/lib/oembed.ts`、`worker/lib/oembed.test.ts` |
 | PR-C | stock-create.ts の fetch-first + UPSTREAM_* | A, B | `worker/handlers/stock-create.ts`、`worker/handlers/stocks.test.ts` |
 | PR-D | GET ハンドラ + UI のエラー表示更新 | C | `worker/handlers/stocks.ts`、`src/pages/stocks.astro`、`src/pages/stock-detail.astro`、`src/lib/api-client.ts` |
 
-各 PR で `npm test` を緑にしてからマージ。テストは spec の §8.1（stock-api-spec.md）を網羅する。
+各 PR で `npm test` を緑にしてからマージ。テストは spec の §8.1（backend-spec.md）を網羅する。
 
 > **改訂履歴:**
 > - 初版（コミット `0329d8a`）: ADR 整備のみ。「migration 0004 で `status` カラムを復活させる PR-B」を含む実装計画。
@@ -163,6 +163,6 @@ Google Slides も SpeakerDeck / Docswell と同じく、メタデータ取得の
 
 ## 参照
 
-- spec（canonical）: [`docs/oembed-spec.md`](../oembed-spec.md) §5–§7、[`docs/stock-api-spec.md`](../stock-api-spec.md) §3、[`docs/architecture.md`](../architecture.md)、[`docs/database.md`](../database.md)、[`docs/ui-spec.md`](../ui-spec.md) §5.3.1 / §7.3 / §7.4
+- spec（canonical）: [`docs/backend-spec.md`](../backend-spec.md)（oEmbed §6 / Stock API §3）、[`docs/architecture-spec.md`](../architecture-spec.md)、[`docs/data-model-spec.md`](../data-model-spec.md)、[`docs/frontend-spec.md`](../frontend-spec.md)
 - 旧決定: [ADR-004](004-remove-queue.md)（Superseded）
 - 関連 migration: `migrations/0001_init.sql`、`migrations/0002_unique_stock_per_user.sql`（並列レース対策の根拠）、`migrations/0003_drop_status.sql`（status 廃止、本 ADR で確定維持）
