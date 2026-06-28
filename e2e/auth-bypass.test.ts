@@ -82,6 +82,15 @@ test.describe("認証バイパス: E2E テスト", () => {
         });
       });
 
+      // /api/stocks にも空一覧を返す（認証後に一覧取得が走るため）
+      await authenticatedPage.route("**/api/stocks", (route) => {
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ items: [], next_cursor: null, has_more: false }),
+        });
+      });
+
       // Act
       await authenticatedPage.goto("/stocks");
 
@@ -177,7 +186,7 @@ test.describe("認証バイパス: E2E テスト", () => {
 
       // Assert: ログイン状態を示す要素が存在する
       // ナビゲーション内にユーザー情報がアクセシブルに表示されている
-      const nav = authenticatedPage.locator("nav");
+      const nav = authenticatedPage.getByRole("navigation", { name: "メインナビゲーション" });
       await expect(nav).toBeVisible();
 
       // ログインユーザー名がナビゲーション内に表示されている
